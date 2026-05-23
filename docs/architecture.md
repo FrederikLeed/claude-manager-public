@@ -63,10 +63,9 @@ claude-manager/
 - Shared: `/home/claude/.claude` (global config + memory + agent
   instructions) and `/shared` (utility files).
 
-Push `data/` to GitHub, clone on a new host, `docker compose -f
-docker-compose.yml up` — settings and memory are restored. Each
-instance re-authenticates (`claude login` for `claude-max`, `gh auth
-login`) on first use.
+Push `data/` to GitHub, clone on a new host, `docker compose up` —
+settings and memory are restored. Each instance re-authenticates
+(`claude login` for `claude-max`, `gh auth login`) on first use.
 
 ---
 
@@ -74,7 +73,7 @@ login`) on first use.
 
 Each workspace container runs under one of four policies:
 
-| Policy             | Hosts allowed (see `workspace/policies/*.yaml`)                 |
+| Policy             | Hosts allowed (see `policies/*.yaml`)                           |
 |--------------------|-----------------------------------------------------------------|
 | `claude-only`      | `api.anthropic.com`, `statsig.anthropic.com`, `sentry.io`       |
 | `claude-github`    | + GitHub (api / web / objects / raw / gist / ssh)               |
@@ -325,7 +324,7 @@ server/
     ├── auth.js              /api/auth/* — device registration & approval
     ├── grants.js            /api/instances/:id/grants, /api/grants/:id/{renew,recreate}, DELETE
     ├── access-requests.js   /api/instances/:id/request-access, /api/access-requests/:id/{approve,deny}
-    ├── policies.js          /api/policies — lists workspace/policies/*.yaml
+    ├── policies.js          /api/policies — lists policies/*.yaml (baked into image at /app/policies)
     ├── litellm.js           /api/litellm/status, /api/litellm/models, per-instance key endpoints
     ├── shared.js            /api/shared/upload (multipart, 50 MB)
     └── system.js            /api/system, /api/system/activity
@@ -529,7 +528,7 @@ All configuration is via environment variables; see `.env.example`.
 | `INSTANCE_MEMORY_DIR`     | *(unset)*                      | Legacy single-shared project memory; leave empty           |
 | `ADMIN_RESET_TOKEN`       | *(unset)*                      | Emergency admin promotion via `?reset_token=…`             |
 | `DEFAULT_NETWORK_POLICY`  | `unrestricted`                 | Pre-selected policy in the create modal                    |
-| `POLICIES_HOST_DIR`       | *(unset)*                      | Host path of `workspace/policies/`; bind-mounted as `/policies` (RO) |
+| `POLICIES_HOST_DIR`       | *(unset)*                      | Optional override — host path to a policy directory (bind-mounted into the manager). Default behaviour is to read the policies copied into the image at `/app/policies`. |
 | `POLICIES_VOLUME`         | `cm-policies`                  | Alternative to `POLICIES_HOST_DIR` for DinD setups         |
 | `POLICIES_DIR`            | `/app/policies` (in container) | Where the manager reads policy YAML from                   |
 | `PROXY_URL`               | `http://cm-proxy:3128`         | Forward proxy injected into restricted instances           |
@@ -547,8 +546,8 @@ for the `foundry` / `foundry-latest` backends — see
 ## 12. Build + deploy
 
 ```bash
-docker compose -f docker-compose.yml --profile build-only build
-docker compose -f docker-compose.yml up -d
+docker compose --profile build-only build
+docker compose up -d
 ```
 
 The `build-only` profile builds the workspace image alongside the

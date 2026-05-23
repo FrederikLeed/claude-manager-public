@@ -1,5 +1,5 @@
 @startuml network-policy
-title Network Policy Enforcement & Access Requests (v2)
+title Network Policy Enforcement & Access Requests
 skinparam backgroundColor #FAFAFA
 skinparam shadowing false
 skinparam sequence {

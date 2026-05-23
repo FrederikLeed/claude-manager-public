@@ -7,7 +7,7 @@ digraph G {
     ranksep=0.65
     fontname="Helvetica"
     labelloc=t
-    label=<<B>LLM Backend Routing (v2)</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Per-instance backend · Claude Max direct · LiteLLM-routed Ollama / Azure AI Foundry</FONT>>
+    label=<<B>LLM Backend Routing</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Per-instance backend · Claude Max direct · LiteLLM-routed Ollama / Azure AI Foundry</FONT>>
     fontsize=18
     bgcolor="#FAFAFA"
   ]
@@ -46,7 +46,7 @@ digraph G {
 
   ollama [label=<<B>cm-ollama</B> :11434<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
     Qwen3 30B-A3B<BR ALIGN="LEFT"/>
-    RTX 3090<BR ALIGN="LEFT"/>
+    NVIDIA GPU (local)<BR ALIGN="LEFT"/>
   </FONT>> fillcolor="#FFE0B2" color="#E65100"]
 
   anthropic [label=<<B>api.anthropic.com</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">

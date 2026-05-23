@@ -18,7 +18,7 @@ node_attr = {"fontname": "Helvetica", "fontsize": "11"}
 edge_attr = {"fontname": "Helvetica", "fontsize": "9"}
 
 with Diagram(
-    "Claude Manager v2 — Deployment",
+    "Claude Manager — Deployment",
     filename="deployment",
     outformat="png",
     show=False,
@@ -33,7 +33,7 @@ with Diagram(
         docker = Docker("Docker Engine")
 
         with Cluster("Manager"):
-            manager = Server("claude-manager-v2\nFastify 5 + React 19\n:3002")
+            manager = Server("claude-manager\nFastify 5 + React 19\n:3002")
             db = Storage("manager.db\nSQLite + WAL")
             manager - db
 

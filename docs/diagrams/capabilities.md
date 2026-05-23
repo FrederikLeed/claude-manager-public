@@ -1,10 +1,10 @@
 ---
-title: What Claude Manager v2 gives the operator
+title: What Claude Manager gives the operator
 markmap:
   colorFreezeLevel: 2
 ---
 
-# Claude Manager v2
+# Claude Manager
 
 ## Instance lifecycle
 ### Create · Start · Stop · Remove
