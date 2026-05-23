@@ -1,0 +1,35 @@
+---
+title: Instance Creation (v2)
+---
+flowchart TD
+  Req[User clicks Create<br/>name · policy · backend · socket?] --> Limit{MAX_INSTANCES<br/>reached?}
+  Limit -- yes --> Reject[Return 429]
+  Limit -- no --> Pull[Ensure image<br/>pull if missing]
+  Pull --> Vol[Create Docker volume<br/>cm-workspace-slug-id]
+  Vol --> Mounts[Learn bind mounts<br/>from template container]
+  Mounts --> Memory[Create per-instance<br/>memory dir]
+  Memory --> Env{networkPolicy ==<br/>unrestricted?}
+  Env -- no --> Proxy[Inject HTTP_PROXY +<br/>HTTPS_PROXY env<br/>+ NET_ADMIN cap]
+  Env -- yes --> NoProxy[No proxy env<br/>full direct egress]
+  Proxy --> LLM
+  NoProxy --> LLM
+  LLM{llmBackend ==<br/>claude-max?}
+  LLM -- yes --> Create
+  LLM -- no --> LiteLLM[Create LiteLLM virtual key<br/>inject ANTHROPIC_BASE_URL<br/>+ ANTHROPIC_API_KEY]
+  LiteLLM --> Create[Create container<br/>labels + binds + net + caps]
+  Create --> Start[Auto-start]
+  Start --> ACL[writeContainerACL<br/>proxy reconfigures]
+  ACL --> Grants[Create capability grants<br/>docker_socket · network_unrestricted<br/>24h expiry default]
+  Grants --> BC[Broadcast INSTANCE_CREATED<br/>over WebSocket]
+  BC --> Clients[All connected clients<br/>re-fetch full list]
+
+  classDef ok fill:#C8E6C9,stroke:#2E7D32;
+  classDef err fill:#FFCDD2,stroke:#C62828;
+  classDef io fill:#BBDEFB,stroke:#1565C0;
+  classDef net fill:#FFE0B2,stroke:#E65100;
+  classDef llm fill:#E1BEE7,stroke:#7B1FA2;
+  class Start,BC,Clients,Grants ok
+  class Reject err
+  class Pull,Vol,Memory,Create io
+  class Proxy,ACL,NoProxy net
+  class LiteLLM llm

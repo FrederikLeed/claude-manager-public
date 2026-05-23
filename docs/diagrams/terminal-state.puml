@@ -1,0 +1,29 @@
+@startuml terminal-state
+title Terminal Session Lifecycle (tmux-backed)
+skinparam backgroundColor #FAFAFA
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+  FontColor #222222
+}
+
+[*] --> Idle
+Idle : No tmux session\nfor this instance
+
+Idle --> Connected : first device connects\ncreatePTY(id)\ntmux new-session -s main
+state Connected {
+  [*] --> Active
+  Active : one device attached
+  Active --> MultiClient : second device connects\ntmux attach -t main
+  MultiClient : two devices attached\nboth see same output
+  MultiClient --> Active : one disconnects
+}
+
+Connected --> Detached : all devices disconnect\n(Ctrl-b d after 200ms)
+Detached : tmux session persists\nno clients attached
+Detached --> Connected : reconnect\ntmux attach -t main\n(full scrollback restored)
+
+Connected --> Idle : container stopped\nor instance terminated
+Detached --> Idle : container stopped
+@enduml

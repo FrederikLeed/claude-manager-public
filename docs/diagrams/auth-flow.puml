@@ -1,0 +1,40 @@
+@startuml auth-flow
+title Claude Manager — Device Authentication Flow
+skinparam backgroundColor #FAFAFA
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #1565C0
+  LifeLineBorderColor #999999
+  ParticipantBorderColor #1565C0
+  ParticipantBackgroundColor #E3F2FD
+  ActorBorderColor #E65100
+  ActorBackgroundColor #FFE0B2
+}
+
+actor Browser as B
+participant "Fastify\nauth.js" as S
+participant "Admin\nDevice" as A
+database SQLite as DB
+
+B -> S : GET /api/auth/status\n(cm_device_token cookie)
+S -> DB : lookup hash(token)
+alt known & approved
+  DB --> S : device row
+  S --> B : 200 approved
+else unknown
+  DB --> S : not found
+  S --> B : needs registration
+  B -> S : POST /api/auth/register\n{ token }
+  S -> DB : INSERT device\n(status=pending)
+  alt first device
+    S -> DB : UPDATE is_admin=true\nstatus=approved
+    S --> B : auto-approved as admin
+  else subsequent device
+    S --> B : 403 pending
+    S -> A : WebSocket notification
+    A -> S : POST /api/auth/devices/:id/approve
+    S -> DB : UPDATE status=approved
+    S --> B : (next poll) approved
+  end
+end
+@enduml

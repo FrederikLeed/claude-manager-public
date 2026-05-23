@@ -1,0 +1,50 @@
+@startuml network-policy
+title Network Policy Enforcement & Access Requests (v2)
+skinparam backgroundColor #FAFAFA
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #1565C0
+  LifeLineBorderColor #999999
+  ParticipantBorderColor #1565C0
+  ParticipantBackgroundColor #E3F2FD
+  ActorBorderColor #E65100
+  ActorBackgroundColor #FFE0B2
+}
+
+actor "Claude\n(inside container)" as A
+participant "iptables\n(entrypoint lock)" as IPT
+participant "cm-proxy\n(squid)" as P
+participant "Internet\n(allowed host)" as I
+database  "/proxy-acl\n(manager-written)" as ACL
+participant "Fastify\n/api" as S
+actor "Admin\n(browser)" as ADM
+
+== Restricted container egress ==
+A -> A : HTTPS_PROXY + HTTPS_PROXY env\n+ NET_ADMIN cap
+A -> IPT : connect api.anthropic.com
+note right of IPT : iptables locks all OUTPUT\nexcept proxy IP + Docker nets
+IPT -> P : forwarded via squid
+P -> ACL : load .acl for src ip
+alt host in allowlist
+  P -> I : CONNECT 443 (SNI)
+  I --> P : data
+  P --> A : tunnel
+else host not allowed
+  P --> A : 403 (instant fail)
+end
+
+== Agent requests access (cm-access) ==
+A -> S : POST /api/instances/:id/request-access\n{ policy?, hosts?, reason }
+S -> S : insert access_requests row\nstatus=pending
+S -> ADM : WebSocket access_requested
+ADM -> S : POST /api/access-requests/:id/approve\n(expiryHours)
+alt requested_policy
+  S -> S : recreateInstance(networkPolicy)\ncreateGrantsForInstance
+  S -> ACL : writeContainerACL(new policy)
+else requested_hosts only
+  S -> ACL : addHostsToACL(existing + new)
+  note right of ACL : squid inotify -> reconfigure\nNo container recreation
+end
+S --> A : (next poll) approved
+A -> P : retry — succeeds
+@enduml

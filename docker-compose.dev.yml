@@ -1,0 +1,28 @@
+services:
+  claude-manager:
+    build: .
+    container_name: claude-manager-dev
+    ports:
+      - "3001:3001"
+      - "5173:5173"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./server:/app/server
+      - ./shared:/app/shared
+      - ./src:/app/src
+      - claude-manager-data:/data
+    environment:
+      - NODE_ENV=development
+      - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
+      - CLAUDE_NETWORK=claude-manager-net
+    command: npm run dev
+    networks:
+      - claude-manager-net
+
+networks:
+  claude-manager-net:
+    name: claude-manager-net
+    driver: bridge
+
+volumes:
+  claude-manager-data:

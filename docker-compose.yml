@@ -1,0 +1,38 @@
+services:
+  claude-manager:
+    build: .
+    container_name: claude-manager
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - claude-manager-data:/data
+      - ${SHARED_DIR:-./data/shared}:/shared
+      - ${INSTANCE_MEMORY_BASE_DIR:-./data/instance-memory}:/instance-memory
+    environment:
+      - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
+      - CLAUDE_NETWORK=claude-manager-net
+      - MAX_INSTANCES=${MAX_INSTANCES:-20}
+      # Host paths to bind-mount into new instances (must be absolute HOST paths)
+      - INSTANCE_SHARED_DIR=${INSTANCE_SHARED_DIR:-}
+      - INSTANCE_MEMORY_DIR=${INSTANCE_MEMORY_DIR:-}
+      - INSTANCE_CLAUDE_DIR=${INSTANCE_CLAUDE_DIR:-}
+      - INSTANCE_MEMORY_BASE_DIR=${INSTANCE_MEMORY_BASE_DIR:-}
+      - ADMIN_RESET_TOKEN=${ADMIN_RESET_TOKEN:-}
+    networks:
+      - claude-manager-net
+
+  claude-workspace:
+    build: ./workspace
+    image: ${CLAUDE_IMAGE:-claude-workspace:latest}
+    profiles:
+      - build-only
+
+networks:
+  claude-manager-net:
+    name: claude-manager-net
+    driver: bridge
+
+volumes:
+  claude-manager-data:

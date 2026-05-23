@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+*.db
+*.db-journal
+*.db-wal
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Diagram build artifacts (markmap HTML — PNGs are tracked)
+docs/diagrams/*.html

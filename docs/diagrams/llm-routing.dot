@@ -1,0 +1,74 @@
+digraph G {
+  graph [
+    rankdir=LR
+    compound=true
+    splines=ortho
+    nodesep=0.4
+    ranksep=0.65
+    fontname="Helvetica"
+    labelloc=t
+    label=<<B>LLM Backend Routing (v2)</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Per-instance backend · Claude Max direct · LiteLLM-routed Ollama / Azure AI Foundry</FONT>>
+    fontsize=18
+    bgcolor="#FAFAFA"
+  ]
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" penwidth=1.5 margin="0.12,0.08"]
+  edge [fontname="Helvetica" fontsize=9 penwidth=1.5]
+
+  subgraph cluster_instances {
+    label=<<B>Workspace instances (per-instance backend)</B>>; labeljust=l
+    style="rounded,dashed,filled"; fillcolor="#E8F5E9"; color="#2E7D32"; penwidth=2
+
+    inst_max [label=<<B>cm-instance-customer-a</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+      claude-max<BR ALIGN="LEFT"/>
+      claude login required<BR ALIGN="LEFT"/>
+      no ANTHROPIC_BASE_URL override<BR ALIGN="LEFT"/>
+    </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
+
+    inst_local [label=<<B>cm-instance-docs-writer</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+      local-llm<BR ALIGN="LEFT"/>
+      ANTHROPIC_BASE_URL → cm-litellm<BR ALIGN="LEFT"/>
+      ANTHROPIC_API_KEY = virtual key<BR ALIGN="LEFT"/>
+    </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
+
+    inst_foundry [label=<<B>cm-instance-doc-eval</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+      foundry<BR ALIGN="LEFT"/>
+      ANTHROPIC_BASE_URL → cm-litellm<BR ALIGN="LEFT"/>
+      ANTHROPIC_API_KEY = virtual key<BR ALIGN="LEFT"/>
+    </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
+  }
+
+  litellm [label=<<B>cm-litellm</B> :4000<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    OpenAI-compatible router<BR ALIGN="LEFT"/>
+    model_list (litellm/config.yaml)<BR ALIGN="LEFT"/>
+    Claude model name aliases<BR ALIGN="LEFT"/>
+    Per-instance virtual keys<BR ALIGN="LEFT"/>
+  </FONT>> fillcolor="#FFE0B2" color="#E65100"]
+
+  ollama [label=<<B>cm-ollama</B> :11434<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    Qwen3 30B-A3B<BR ALIGN="LEFT"/>
+    RTX 3090<BR ALIGN="LEFT"/>
+  </FONT>> fillcolor="#FFE0B2" color="#E65100"]
+
+  anthropic [label=<<B>api.anthropic.com</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    Claude inference (Max plan)<BR ALIGN="LEFT"/>
+  </FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+
+  azure_mini [label=<<B>Azure AI Foundry</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    deployment: gpt-4.1-mini-1<BR ALIGN="LEFT"/>
+  </FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+
+  azure_latest [label=<<B>Azure AI Foundry</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    deployment: gpt-chat-latest<BR ALIGN="LEFT"/>
+  </FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+
+  pg [label=<<B>cm-litellm-db</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">PostgreSQL 16<BR ALIGN="LEFT"/>virtual keys + spend<BR ALIGN="LEFT"/></FONT>> shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
+
+  inst_max     -> anthropic [label="HTTPS\n(or via squid if restricted)" color="#7B1FA2"]
+  inst_local   -> litellm   [label="anthropic API shape" color="#E65100"]
+  inst_foundry -> litellm   [label="anthropic API shape" color="#E65100"]
+
+  litellm -> ollama        [label="ollama_chat/qwen3:30b-a3b\nfor local-llm AND\nfor claude-* model aliases" color="#E65100"]
+  litellm -> azure_mini    [label="openai/gpt-4.1-mini-1\nfor backend=foundry" color="#7B1FA2"]
+  litellm -> azure_latest  [label="openai/gpt-chat-latest\nfor backend=foundry-latest" color="#7B1FA2"]
+  litellm -> pg [style=dashed]
+}

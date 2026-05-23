@@ -1,0 +1,90 @@
+digraph G {
+  graph [
+    rankdir=LR
+    compound=true
+    splines=ortho
+    nodesep=0.35
+    ranksep=0.6
+    fontname="Helvetica"
+    labelloc=t
+    label=<<B>Claude Manager v2 — Data Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Git-tracked config &amp; memory · Per-instance isolation · Per-instance auth · Per-container ACL files</FONT>>
+    fontsize=18
+    bgcolor="#FAFAFA"
+  ]
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" penwidth=1.5 margin="0.12,0.08"]
+  edge [fontname="Helvetica" fontsize=9 penwidth=1.5]
+
+  subgraph cluster_host {
+    label=<<B>Host filesystem</B>>; labeljust=l
+    style="rounded,filled,dashed"; fillcolor="#F5F5F5"; color="#999999"; fontsize=13; penwidth=2
+
+    subgraph cluster_gittracked {
+      label=<<B>./data/ (git-tracked)</B>>; labeljust=l
+      style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#1565C0"
+
+      d_shared [label=<<B>data/shared/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        Cross-instance files<BR ALIGN="LEFT"/>
+        uploads · templates · tools<BR ALIGN="LEFT"/>
+        <I>SHARED across all instances</I><BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#E3F2FD" color="#1565C0"]
+
+      d_home [label=<<B>data/claude-home/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        global CLAUDE.md<BR ALIGN="LEFT"/>
+        settings.json (preferences)<BR ALIGN="LEFT"/>
+        memory/ (global memories)<BR ALIGN="LEFT"/>
+        <I>SHARED — auth gitignored</I><BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#FFF3E0" color="#E65100"]
+
+      subgraph cluster_memdir {
+        label=<<B>data/instance-memory/</B><BR/><FONT POINT-SIZE="9" COLOR="#7B1FA2"><I>ISOLATED per instance</I></FONT>>; labeljust=l
+        style="rounded,filled"; fillcolor="#F3E5F5"; color="#7B1FA2"
+        mem_a [label=<<B>customer-a/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">CLAUDE.md · memory/<BR ALIGN="LEFT"/></FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+        mem_b [label=<<B>customer-b/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">CLAUDE.md · memory/<BR ALIGN="LEFT"/></FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+        mem_c [label=<<B>docs-writer/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">CLAUDE.md · memory/<BR ALIGN="LEFT"/></FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+      }
+    }
+
+    d_policies [label=<<B>workspace/policies/</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+      claude-only · claude-github<BR ALIGN="LEFT"/>
+      claude-full-dev · unrestricted<BR ALIGN="LEFT"/>
+      <I>YAML, RO, bind into manager</I><BR ALIGN="LEFT"/>
+    </FONT>> fillcolor="#FFCDD2" color="#C62828"]
+
+    subgraph cluster_vols {
+      label=<<B>Docker volumes (not git-tracked)</B>>; labeljust=l
+      style="rounded,filled,dashed"; fillcolor="#E8F5E9"; color="#2E7D32"
+      vol_ws    [label="cm-workspace-{slug}-{id}\n(one per instance)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
+      vol_mgr   [label="claude-manager-v2-data\n(manager.db)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
+      vol_acl   [label="proxy-acl\n(squid ACLs)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
+      vol_ollama [label="ollama-data\n(model weights)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
+      vol_pgdb  [label="litellm-db\n(virtual keys)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
+    }
+  }
+
+  subgraph cluster_inst {
+    label=<<B>Inside workspace container: cm-instance-customer-a</B>>; labeljust=l
+    style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#2E7D32"; fontsize=13; penwidth=2
+
+    c_ws   [label=<<B>/workspace</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">Docker volume<BR ALIGN="LEFT"/>customer-repo/<BR ALIGN="LEFT"/></FONT>> fillcolor="#A5D6A7" color="#2E7D32"]
+    c_mem  [label=<<B>/workspace/.claude</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">Per-instance memory<BR ALIGN="LEFT"/>CLAUDE.md · memory/<BR ALIGN="LEFT"/></FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+    c_home [label=<<B>/home/claude/.claude</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">Global config (shared)<BR ALIGN="LEFT"/>CLAUDE.md · settings.json<BR ALIGN="LEFT"/></FONT>> fillcolor="#FFE0B2" color="#E65100"]
+    c_shr  [label=<<B>/shared</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">Cross-instance files<BR ALIGN="LEFT"/>uploads · templates<BR ALIGN="LEFT"/></FONT>> fillcolor="#BBDEFB" color="#1565C0"]
+  }
+
+  subgraph cluster_mgr_view {
+    label=<<B>Inside manager: claude-manager-v2</B>>; labeljust=l
+    style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#1565C0"; fontsize=13; penwidth=2
+    m_data    [label=<<B>/data</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">manager.db (SQLite)<BR ALIGN="LEFT"/>+ /data/backups/<BR ALIGN="LEFT"/></FONT>> fillcolor="#BBDEFB" color="#1565C0"]
+    m_policies [label=<<B>/policies (RO)</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">YAML policy bundle<BR ALIGN="LEFT"/></FONT>> fillcolor="#FFCDD2" color="#C62828"]
+    m_acl     [label=<<B>/proxy-acl</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">manager WRITES<BR ALIGN="LEFT"/>squid READS<BR ALIGN="LEFT"/></FONT>> fillcolor="#FFE0B2" color="#E65100"]
+  }
+
+  vol_ws    -> c_ws   [style=dashed label="volume mount" color="#2E7D32"]
+  mem_a     -> c_mem  [style=dashed label="bind mount" color="#7B1FA2"]
+  d_home    -> c_home [style=dashed label="bind mount" color="#E65100"]
+  d_shared  -> c_shr  [style=dashed label="bind mount" color="#1565C0"]
+
+  vol_mgr    -> m_data    [style=dashed color="#1565C0"]
+  d_policies -> m_policies [style=dashed label="bind mount (RO)" color="#C62828"]
+  vol_acl    -> m_acl     [style=dashed color="#E65100"]
+}

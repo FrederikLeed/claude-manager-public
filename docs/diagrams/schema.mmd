@@ -1,0 +1,56 @@
+---
+title: manager.db Schema (v2)
+---
+erDiagram
+  INSTANCES ||--o{ ACTIVITY_LOG : "logs"
+  INSTANCES ||--o{ CAPABILITY_GRANTS : "high-risk capability"
+  INSTANCES ||--o{ ACCESS_REQUESTS : "agent requests"
+  INSTANCES {
+    text id           PK "8-char UUID (manager-assigned)"
+    text docker_id       "Full Docker ID, set for adopted containers"
+    text name
+    text image
+    int  created_at      "Unix seconds"
+    text notes
+    text tags            "JSON array"
+    int  port
+    text litellm_key     "Per-instance LiteLLM virtual key (non-claude-max backends)"
+  }
+  DEVICES {
+    text id           PK "UUID"
+    text name
+    text token_hash   UK "SHA-256 of device token"
+    int  approved        "0 / 1 — first device auto-approved"
+    int  is_admin        "0 / 1"
+    text user_agent
+    text last_seen       "datetime('now')"
+    text created_at      "datetime('now')"
+  }
+  ACTIVITY_LOG {
+    int  id           PK
+    text action          "create | start | stop | remove | adopt | grant_expired | access_requested | access_approved | access_denied"
+    text instance_id     "instances.id (kept after deletion)"
+    text instance_name   "denormalized for display"
+    text details
+    text created_at      "datetime('now')"
+  }
+  CAPABILITY_GRANTS {
+    int  id              PK
+    text instance_id     "instances.id"
+    text capability_name "docker_socket | network_unrestricted"
+    text granted_at      "datetime('now')"
+    text expires_at      "ISO 8601 — checker stops the container on expiry"
+    text source          "instance-creation | manual | access-request"
+    int  active          "0 / 1 (composite UK with instance_id + capability_name)"
+  }
+  ACCESS_REQUESTS {
+    int  id              PK
+    text instance_id     "instances.id"
+    text requested_policy "claude-only | claude-github | claude-full-dev | unrestricted"
+    text requested_hosts "JSON array — for add-hosts-only requests"
+    text reason
+    text status          "pending | approved | denied"
+    text created_at      "datetime('now')"
+    text resolved_at
+    text resolved_by     "device name"
+  }

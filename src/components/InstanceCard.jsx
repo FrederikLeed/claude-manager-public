@@ -1,0 +1,153 @@
+import { useState } from 'react';
+import StatusBadge from './StatusBadge.jsx';
+
+function timeAgo(unixTimestamp) {
+  const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+const borderColors = {
+  running: 'border-l-green-500',
+  exited: 'border-l-gray-600',
+  created: 'border-l-yellow-500',
+  removing: 'border-l-red-500',
+  paused: 'border-l-blue-500',
+  dead: 'border-l-red-700',
+};
+
+export default function InstanceCard({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting }) {
+  const [stopping, setStopping] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [recreating, setRecreating] = useState(false);
+  const busy = stopping || removing || recreating;
+  const isRunning = instance.state === 'running';
+  const isStopped = instance.state === 'exited' || instance.state === 'created';
+  const borderColor = borderColors[instance.state] || 'border-l-gray-600';
+
+  const handleStop = async () => {
+    setStopping(true);
+    try { await onStop(instance.id); } finally { setStopping(false); }
+  };
+
+  const handleRemove = async () => {
+    if (!window.confirm(`Remove instance "${instance.name}"? This cannot be undone.`)) return;
+    setRemoving(true);
+    try { await onRemove(instance.id); } finally { setRemoving(false); }
+  };
+
+  return (
+    <div className={`animate-card-in bg-gray-900 border border-gray-800 border-l-4 ${borderColor} rounded-lg p-4 flex flex-col gap-3 hover:border-gray-700 hover:shadow-lg hover:shadow-black/20 transition-all`}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-gray-100 truncate">{instance.name}</h3>
+          <p className="text-xs text-gray-500 truncate mt-0.5" title={instance.image}>
+            {instance.image?.split(':')[0]?.split('/').pop() || instance.image}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {managed && (
+            <button
+              onClick={async () => {
+                const next = !instance.dockerSocket;
+                const msg = next
+                  ? 'Enable Docker socket? Container will be recreated.'
+                  : 'Disable Docker socket? Container will be recreated.';
+                if (!window.confirm(msg)) return;
+                setRecreating(true);
+                try { await onRecreate(instance.id, { dockerSocket: next }); } finally { setRecreating(false); }
+              }}
+              disabled={busy}
+              className={`text-[10px] border rounded px-1 py-0.5 transition-colors ${
+                instance.dockerSocket
+                  ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
+                  : 'text-gray-600 border-gray-700 hover:text-gray-400 hover:border-gray-600'
+              }`}
+              title={instance.dockerSocket ? 'Docker socket enabled — click to disable (recreates container)' : 'Docker socket disabled — click to enable (recreates container)'}
+            >
+              {recreating ? '...' : 'Docker'}
+            </button>
+          )}
+          {!managed && (
+            <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">Unmanaged</span>
+          )}
+          <StatusBadge state={instance.state} />
+        </div>
+      </div>
+
+      {/* Meta */}
+      <div className="text-xs text-gray-500">
+        Created {timeAgo(instance.created)}
+        {instance.status && <span className="ml-2 text-gray-600">({instance.status})</span>}
+      </div>
+
+      {/* Notes */}
+      {instance.notes && (
+        <p className="text-xs text-gray-400 line-clamp-2">{instance.notes}</p>
+      )}
+
+      {/* Tags */}
+      {instance.tags?.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {instance.tags.map((tag) => (
+            <span key={tag} className="px-1.5 py-0.5 bg-gray-800 text-gray-400 text-xs rounded">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Actions — larger touch targets for mobile */}
+      <div className="flex items-center gap-2 mt-auto pt-2 border-t border-gray-800">
+        {managed ? (
+          <>
+            {isRunning && (
+              <>
+                <button
+                  onClick={() => onTerminal(instance.id)}
+                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-medium rounded-md transition-colors min-h-[36px]"
+                >
+                  Terminal
+                </button>
+                <button
+                  onClick={handleStop}
+                  disabled={busy}
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:bg-gray-800 disabled:text-gray-500 text-gray-200 text-xs font-medium rounded-md transition-colors min-h-[36px]"
+                >
+                  {stopping ? 'Stopping...' : 'Stop'}
+                </button>
+              </>
+            )}
+            {isStopped && (
+              <button
+                onClick={() => onStart(instance.id)}
+                className="flex-1 px-3 py-2 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white text-xs font-medium rounded-md transition-colors min-h-[36px]"
+              >
+                Start
+              </button>
+            )}
+            <button
+              onClick={handleRemove}
+              disabled={busy}
+              className="px-3 py-2 bg-gray-800 hover:bg-red-900/50 active:bg-red-900/70 disabled:bg-gray-800 disabled:text-gray-500 text-gray-400 hover:text-red-400 text-xs font-medium rounded-md transition-colors min-h-[36px]"
+              title="Remove instance"
+            >
+              {removing ? 'Removing...' : 'Remove'}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => onAdopt?.(instance)}
+            disabled={adopting}
+            className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-blue-800 disabled:text-blue-400 text-white text-xs font-medium rounded-md transition-colors min-h-[36px]"
+          >
+            {adopting ? 'Adopting...' : 'Adopt'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

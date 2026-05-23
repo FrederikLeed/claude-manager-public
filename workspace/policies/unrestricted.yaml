@@ -1,0 +1,3 @@
+name: unrestricted
+description: No network restrictions — current default behavior
+unrestricted: true

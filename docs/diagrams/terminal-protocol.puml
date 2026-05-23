@@ -1,0 +1,58 @@
+@startuml terminal-protocol
+title Shared Terminal — WebSocket Protocol
+skinparam backgroundColor #FAFAFA
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #1565C0
+  LifeLineBorderColor #999999
+  ParticipantBorderColor #1565C0
+  ParticipantBackgroundColor #E3F2FD
+}
+
+actor "Desktop\nxterm.js" as D
+actor "Mobile\nxterm.js" as M
+participant "Fastify\nterminal.js" as S
+participant "docker exec\n(PTY)" as E
+participant "tmux -L cm\nsession 'main'" as T
+
+== First device connects ==
+D -> S : ws://host:3000/api/instances/:id/terminal
+S -> E : createPTY(id)\ndocker exec -i -t
+E -> T : tmux new-session -A -s main
+T --> E : session stdout
+E --> S : binary stream
+S --> D : ws binary frames
+
+== Typing + resize ==
+D -> S : keystrokes (binary)
+S -> E : stdin pipe
+D -> S : {"type":"resize","cols":120,"rows":40}
+S -> E : exec.resize(cols,rows)
+
+== Second device attaches (shared session) ==
+M -> S : ws://host:3000/api/instances/:id/terminal
+S -> E : createPTY(id)
+E -> T : tmux new-session -A -s main\n(-A attaches if exists)
+T --> E : same session stdout
+E --> S : binary stream
+S --> M : ws binary frames
+
+note over D, M
+  Both devices now see identical output
+  Keystrokes from either device reach the same shell
+end note
+
+== Device disconnects ==
+D -> S : ws close
+S -> E : Ctrl-b d (detach) after 200ms
+note right of T : Session persists — no clients attached
+
+== Device reconnects ==
+D -> S : ws://host:3000/api/instances/:id/terminal
+S -> E : createPTY(id)
+E -> T : tmux attach -t main
+T --> E : full scrollback
+E --> S : replay stream
+S --> D : reconstructed view
+
+@enduml

@@ -1,0 +1,13 @@
+name: claude-github
+description: Anthropic API + GitHub — for repo-bound coding tasks
+allowed_hosts:
+  - api.anthropic.com
+  - platform.claude.com
+  - statsig.anthropic.com
+  - sentry.io
+  - github.com
+  - api.github.com
+  - raw.githubusercontent.com
+  - objects.githubusercontent.com
+  - gist.githubusercontent.com
+  - ssh.github.com

@@ -1,0 +1,200 @@
+#!/bin/bash
+# cm-access — Query and request network access from Claude Manager.
+# Installed in workspace containers. Uses CM_MANAGER_URL and CM_INSTANCE_ID env vars.
+set -euo pipefail
+
+MANAGER="${CM_MANAGER_URL:-}"
+INSTANCE="${CM_INSTANCE_ID:-}"
+API="${MANAGER}/api"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+check_env() {
+  [ -n "$MANAGER" ] || die "CM_MANAGER_URL not set. Is this a managed container?"
+  [ -n "$INSTANCE" ] || die "CM_INSTANCE_ID not set. Is this a managed container?"
+}
+
+cmd_list() {
+  check_env
+  echo "Available network policies:"
+  echo ""
+  curl -sf "${API}/policies" | jq -r '
+    .[] | "  \(.id)\n    \(.description)\n    Hosts: \(
+      if .unrestricted then "ALL (unrestricted)"
+      elif (.allowedHosts | length) > 0 then (.allowedHosts | join(", "))
+      else "none"
+      end
+    )\n"'
+}
+
+cmd_show() {
+  check_env
+  local policy="${1:-}"
+  [ -n "$policy" ] || die "Usage: cm-access --show <policy-name>"
+  curl -sf "${API}/policies" | jq -r --arg p "$policy" '
+    .[] | select(.id == $p or .name == $p) |
+    "Policy: \(.id)\nDescription: \(.description)\nUnrestricted: \(.unrestricted)\n\nAllowed hosts:\n" +
+    (if .unrestricted then "  (all traffic allowed)"
+     elif (.allowedHosts | length) > 0 then (.allowedHosts | map("  - " + .) | join("\n"))
+     else "  (none)"
+     end)'
+  local result=$?
+  [ $result -eq 0 ] || die "Policy '$policy' not found"
+}
+
+cmd_status() {
+  check_env
+  echo "Instance: ${INSTANCE}"
+  echo ""
+
+  # Get current container's policy from labels
+  local policy
+  policy=$(curl -sf "${API}/instances/${INSTANCE}/request-access" 2>/dev/null | jq -r '.' 2>/dev/null) || true
+
+  # Get effective access
+  local access
+  access=$(curl -sf "${API}/instances/${INSTANCE}/access" 2>/dev/null) || true
+
+  if [ -n "$access" ]; then
+    local approved_hosts
+    approved_hosts=$(echo "$access" | jq -r '.approvedHosts[]?' 2>/dev/null)
+    local approved_policies
+    approved_policies=$(echo "$access" | jq -r '.approvedPolicies[]?' 2>/dev/null)
+
+    if [ -n "$approved_policies" ]; then
+      echo "Policy upgrades applied:"
+      echo "$approved_policies" | while read -r p; do echo "  + $p"; done
+      echo ""
+    fi
+
+    if [ -n "$approved_hosts" ]; then
+      echo "Additional approved hosts:"
+      echo "$approved_hosts" | while read -r h; do echo "  + $h"; done
+      echo ""
+    fi
+  fi
+
+  # Show pending/recent requests
+  if [ -n "$policy" ] && [ "$policy" != "null" ]; then
+    local pending
+    pending=$(echo "$policy" | jq '[.[] | select(.status == "pending")]')
+    local count
+    count=$(echo "$pending" | jq 'length')
+    if [ "$count" -gt 0 ]; then
+      echo "Pending requests:"
+      echo "$pending" | jq -r '.[] | "  #\(.id): \(.requested_policy // (.requested_hosts | join(", "))) — \(.reason // "no reason")"'
+      echo ""
+    fi
+
+    local recent
+    recent=$(echo "$policy" | jq '[.[] | select(.status != "pending")] | sort_by(.resolved_at) | reverse | .[0:5]')
+    local rcount
+    rcount=$(echo "$recent" | jq 'length')
+    if [ "$rcount" -gt 0 ]; then
+      echo "Recent requests:"
+      echo "$recent" | jq -r '.[] | "  #\(.id) [\(.status)]: \(.requested_policy // (.requested_hosts | join(", "))) — \(.reason // "no reason")"'
+    fi
+  fi
+}
+
+cmd_request() {
+  check_env
+  local policy="" hosts="" reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --policy) policy="$2"; shift 2 ;;
+      --hosts)  hosts="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
+      *) die "Unknown arg: $1. Usage: cm-access --request --policy <name> [--hosts <h1,h2>] --reason <text>" ;;
+    esac
+  done
+
+  [ -n "$policy" ] || [ -n "$hosts" ] || die "Must specify --policy or --hosts"
+  [ -n "$reason" ] || die "Must specify --reason"
+
+  local body='{'
+  local first=true
+  if [ -n "$policy" ]; then
+    body+="\"policy\":\"${policy}\""
+    first=false
+  fi
+  if [ -n "$hosts" ]; then
+    $first || body+=","
+    # Convert comma-separated to JSON array
+    local json_hosts
+    json_hosts=$(echo "$hosts" | jq -R 'split(",") | map(gsub("^ +| +$";""))')
+    body+="\"hosts\":${json_hosts}"
+    first=false
+  fi
+  body+=",\"reason\":\"${reason}\""
+  body+='}'
+
+  local result
+  result=$(curl -sf -X POST "${API}/instances/${INSTANCE}/request-access" \
+    -H "Content-Type: application/json" \
+    -d "$body")
+
+  local req_id
+  req_id=$(echo "$result" | jq -r '.id')
+  echo "Access request #${req_id} submitted (status: pending)"
+  echo "Admin must approve in Claude Manager UI."
+  echo ""
+  echo "Run 'cm-access --poll' to wait for approval."
+}
+
+cmd_poll() {
+  check_env
+  echo "Waiting for pending requests to be resolved..."
+  local attempts=0
+  while [ $attempts -lt 120 ]; do
+    local pending
+    pending=$(curl -sf "${API}/instances/${INSTANCE}/request-access" | jq '[.[] | select(.status == "pending")] | length')
+    if [ "$pending" -eq 0 ]; then
+      echo "All requests resolved."
+      echo ""
+      # Show final status
+      curl -sf "${API}/instances/${INSTANCE}/request-access" | jq -r '.[] | select(.status != "pending") | "  #\(.id) [\(.status)]: \(.requested_policy // (.requested_hosts | join(", ")))"' | tail -3
+      exit 0
+    fi
+    sleep 5
+    attempts=$((attempts + 1))
+    printf "."
+  done
+  echo ""
+  die "Timed out after 10 minutes"
+}
+
+cmd_help() {
+  cat <<'HELP'
+cm-access — Query and request network access
+
+Commands:
+  --list                 List all available network policies
+  --show <policy>        Show details for a specific policy
+  --status               Show current access (policy + approved extras + pending)
+  --request              Submit an access request
+      --policy <name>      Request a policy upgrade
+      --hosts <h1,h2,...>  Request specific hosts
+      --reason <text>      Why access is needed (required)
+  --poll                 Wait for pending requests to be approved/denied
+  --help                 Show this help
+
+Examples:
+  cm-access --list
+  cm-access --show claude-full-dev
+  cm-access --status
+  cm-access --request --policy claude-full-dev --reason "Need npm install"
+  cm-access --request --hosts "dr.dk,www.dr.dk" --reason "Scrape DR news"
+  cm-access --poll
+HELP
+}
+
+case "${1:---help}" in
+  --list)    cmd_list ;;
+  --show)    shift; cmd_show "$@" ;;
+  --status)  cmd_status ;;
+  --request) shift; cmd_request "$@" ;;
+  --poll)    cmd_poll ;;
+  --help|-h) cmd_help ;;
+  *)         die "Unknown command: $1. Run 'cm-access --help'" ;;
+esac

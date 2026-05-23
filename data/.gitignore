@@ -1,0 +1,31 @@
+# Claude auth secrets — re-login after recovery
+claude-home/.credentials*
+claude-home/.claude_session*
+claude-home/statsig/
+claude-home/.tokens*
+claude-home/oauth_*
+
+# Claude session data — NEVER track these
+claude-home/projects/
+claude-home/backups/
+claude-home/cache/
+claude-home/file-history/
+claude-home/paste-cache/
+claude-home/history.jsonl
+claude-home/plans/
+claude-home/sessions/
+claude-home/shell-snapshots/
+claude-home/tasks/
+claude-home/plugins/
+
+# Instance memory contents (per-instance, not for git)
+instance-memory/*/
+
+# Shared files (user-specific, not for git)
+shared/*
+!shared/.gitkeep
+
+# Keep directory structure
+!.gitignore
+!.gitkeep
+!claude-home/CLAUDE.md

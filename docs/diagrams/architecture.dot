@@ -1,0 +1,113 @@
+digraph G {
+  graph [
+    rankdir=TB
+    compound=true
+    splines=ortho
+    nodesep=0.35
+    ranksep=0.55
+    fontname="Helvetica"
+    labelloc=t
+    label=<<B>Claude Manager v2 — Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Six-container stack · per-container network policy · pluggable LLM backend</FONT>>
+    fontsize=18
+    bgcolor="#FAFAFA"
+  ]
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" penwidth=1.5 margin="0.12,0.08"]
+  edge [fontname="Helvetica" fontsize=9 penwidth=1.5]
+
+  browser [label="Browser" fillcolor="#BBDEFB" color="#1565C0"]
+  anthropic [label=<<B>api.anthropic.com</B><BR/><FONT POINT-SIZE="8">Claude Max direct path</FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+  azure [label=<<B>Azure AI Foundry</B><BR/><FONT POINT-SIZE="8">GPT-4.1-mini, GPT Latest</FONT>> fillcolor="#E1BEE7" color="#7B1FA2"]
+
+  subgraph cluster_host {
+    label=<<B>Docker Host (claude-manager-net bridge)</B>>; labeljust=l; style="rounded,dashed"; color="#999999"; bgcolor="#F5F5F5"; fontsize=13
+
+    subgraph cluster_manager {
+      label=<<B>claude-manager-v2</B> :3002>; labeljust=l
+      style="rounded,filled"; fillcolor="#E3F2FD"; color="#1565C0"; penwidth=2
+
+      frontend [label=<<B>React 19 Frontend</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        • Dashboard — grid + list views<BR ALIGN="LEFT"/>
+        • NewInstanceModal — policy + backend<BR ALIGN="LEFT"/>
+        • AccessRequests — admin approval<BR ALIGN="LEFT"/>
+        • DeviceManager · LiteLLMPanel · GrantBadge<BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#BBDEFB" color="#1565C0"]
+
+      backend [label=<<B>Fastify 5 Backend</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        • routes: instances · terminal · auth<BR ALIGN="LEFT"/>
+        • routes: grants · access-requests · policies<BR ALIGN="LEFT"/>
+        • routes: litellm · system · shared<BR ALIGN="LEFT"/>
+        • docker.js · proxy.js · grants.js · litellm.js<BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#BBDEFB" color="#1565C0"]
+
+      sqlite [label=<manager.db<BR/>(SQLite)> shape=cylinder fillcolor="#BBDEFB" color="#1565C0"]
+    }
+
+    socket [label=<<B>/var/run/docker.sock</B>> fillcolor="#FFF9C4" color="#F9A825"]
+    engine [label=<<B>Docker Engine</B><BR ALIGN="CENTER"/><FONT POINT-SIZE="8">
+      Container lifecycle<BR/>Event stream<BR/>Exec / PTY</FONT>>
+      fillcolor="#FFF3E0" color="#E65100" penwidth=2]
+
+    subgraph cluster_sidecars {
+      label=<<B>Sidecars</B>>; labeljust=l
+      style="rounded,dashed,filled"; fillcolor="#FFF3E0"; color="#E65100"; penwidth=2
+
+      proxy [label=<<B>cm-proxy</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        squid forward proxy<BR ALIGN="LEFT"/>
+        per-container ACL files<BR ALIGN="LEFT"/>
+        inotify → squid -k reconfigure<BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#FFE0B2" color="#E65100"]
+
+      litellm [label=<<B>cm-litellm</B> :4000<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        OpenAI-compatible router<BR ALIGN="LEFT"/>
+        per-instance virtual keys<BR ALIGN="LEFT"/>
+        Claude name aliases → Qwen3<BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#FFE0B2" color="#E65100"]
+
+      ollama [label=<<B>cm-ollama</B> :11434<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+        Qwen3 30B-A3B<BR ALIGN="LEFT"/>
+        NVIDIA RTX 3090 (CUDA)<BR ALIGN="LEFT"/>
+      </FONT>> fillcolor="#FFE0B2" color="#E65100"]
+
+      litellm_db [label=<<B>cm-litellm-db</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">PostgreSQL 16<BR ALIGN="LEFT"/>LiteLLM virtual key state<BR ALIGN="LEFT"/></FONT>>
+        shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
+    }
+
+    subgraph cluster_instances {
+      label=<<B>Workspace Instances (sibling containers, cm-instance-*)</B>>; labeljust=l
+      style="rounded,dashed,filled"; fillcolor="#E8F5E9"; color="#2E7D32"; penwidth=2
+
+      subgraph cluster_inst1 {
+        label=<<B>cm-instance-customer-a</B><BR/><FONT POINT-SIZE="8">claude-only · claude-max</FONT>>; labeljust=l
+        style="rounded,filled"; fillcolor="#C8E6C9"; color="#2E7D32"
+        i1_ws   [label="/workspace" fillcolor="#A5D6A7" color="#2E7D32"]
+        i1_mem  [label="/workspace/.claude" fillcolor="#E1BEE7" color="#7B1FA2"]
+        i1_home [label="/home/claude/.claude" fillcolor="#FFE0B2" color="#E65100"]
+        i1_fw   [label=<HTTPS_PROXY + iptables<BR/><FONT POINT-SIZE="7">domain ACL · direct block</FONT>>
+          fillcolor="#FFCDD2" color="#C62828"]
+      }
+
+      subgraph cluster_inst2 {
+        label=<<B>cm-instance-docs-writer</B><BR/><FONT POINT-SIZE="8">unrestricted · local-llm</FONT>>; labeljust=l
+        style="rounded,filled"; fillcolor="#C8E6C9"; color="#2E7D32"
+        i2_ws   [label="/workspace" fillcolor="#A5D6A7" color="#2E7D32"]
+        i2_mem  [label="/workspace/.claude" fillcolor="#E1BEE7" color="#7B1FA2"]
+        i2_home [label="/home/claude/.claude" fillcolor="#FFE0B2" color="#E65100"]
+        i2_llm  [label=<ANTHROPIC_BASE_URL<BR/><FONT POINT-SIZE="7">→ cm-litellm</FONT>>
+          fillcolor="#FFE0B2" color="#E65100"]
+      }
+    }
+  }
+
+  browser  -> frontend [label="HTTPS :3002\n+ WebSocket" color="#1565C0" lhead=cluster_manager]
+  backend  -> socket   [label="dockerode" color="#F9A825"]
+  socket   -> engine   [color="#F9A825"]
+  engine   -> i1_ws    [label="create · exec\nevents" color="#E65100" lhead=cluster_instances]
+  backend  -> proxy    [label="writes\nACL files" style=dashed color="#E65100"]
+
+  i1_fw    -> proxy    [label="HTTPS via\nsquid" color="#C62828"]
+  proxy    -> anthropic [label="filtered\nby domain" color="#7B1FA2"]
+  i2_llm   -> litellm  [color="#E65100"]
+  litellm  -> ollama   [label="Claude aliases\n→ Qwen3" color="#E65100"]
+  litellm  -> azure    [label="foundry / foundry-latest" color="#7B1FA2"]
+  litellm  -> litellm_db [label="virtual keys" style=dashed color="#E65100"]
+}

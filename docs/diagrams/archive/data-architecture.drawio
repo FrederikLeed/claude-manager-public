@@ -1,0 +1,282 @@
+<mxfile>
+  <diagram name="Data Architecture" id="data-arch">
+    <mxGraphModel dx="1400" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="960">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="Claude Manager — Data Architecture" style="text;html=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#222222;" vertex="1" parent="1">
+          <mxGeometry x="350" y="15" width="450" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Git-tracked config &amp; memory · Per-instance isolation · Per-instance auth" style="text;html=1;fontSize=11;align=center;verticalAlign=middle;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="300" y="48" width="550" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== HOST FILESYSTEM ===== -->
+        <mxCell id="host" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="30" y="80" width="600" height="820" as="geometry"/>
+        </mxCell>
+        <mxCell id="host_label" value="Host: data/ directory (git-tracked)" style="text;html=1;fontSize=14;fontStyle=1;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="host">
+          <mxGeometry x="15" y="8" width="350" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="host_git" value="git push = full backup" style="text;html=1;fontSize=10;fontStyle=2;align=right;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="host">
+          <mxGeometry x="400" y="10" width="180" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- data/shared/ -->
+        <mxCell id="shared" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="host">
+          <mxGeometry x="20" y="50" width="270" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared_label" value="&lt;b&gt;data/shared/&lt;/b&gt;" style="text;html=1;fontSize=13;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#1565C0;" vertex="1" parent="shared">
+          <mxGeometry x="10" y="8" width="200" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared_badge" value="SHARED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1565C0;fontColor=#FFFFFF;fontSize=9;fontStyle=1;strokeColor=none;" vertex="1" parent="shared">
+          <mxGeometry x="200" y="10" width="55" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared_desc" value="Cross-instance file sharing&#xa;&#xa;• Uploaded files from web UI&#xa;• Personal tools &amp; templates&#xa;• Utility scripts&#xa;&#xa;Mounted as /shared in ALL containers&#xa;+ accessible in manager at /data/shared" style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="shared">
+          <mxGeometry x="10" y="35" width="250" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- data/claude-home/ -->
+        <mxCell id="claude_home" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="host">
+          <mxGeometry x="310" y="50" width="270" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="ch_label" value="&lt;b&gt;data/claude-home/&lt;/b&gt;" style="text;html=1;fontSize=13;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#E65100;" vertex="1" parent="claude_home">
+          <mxGeometry x="10" y="8" width="200" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="ch_badge" value="SHARED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E65100;fontColor=#FFFFFF;fontSize=9;fontStyle=1;strokeColor=none;" vertex="1" parent="claude_home">
+          <mxGeometry x="200" y="10" width="55" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="ch_desc" value="Global Claude configuration&#xa;(settings + memory — NOT auth)&#xa;&#xa;• settings.json — preferences&#xa;• memory/ — global memories&#xa;• CLAUDE.md — shared instructions&#xa;&#xa;Mounted as ~/.claude in ALL containers" style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="claude_home">
+          <mxGeometry x="10" y="35" width="250" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- .gitignore callout -->
+        <mxCell id="gitignore" value="&lt;b&gt;Auth is per-instance.&lt;/b&gt; &amp;quot;claude login&amp;quot; and &amp;quot;gh auth login&amp;quot; run inside each container;&#xa;credentials stay in the container and do NOT live in data/claude-home/." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=#FFF9C4;strokeColor=#F9A825;rounded=1;spacingLeft=8;spacingTop=4;spacingRight=8;spacingBottom=4;" vertex="1" parent="host">
+          <mxGeometry x="20" y="245" width="560" height="36" as="geometry"/>
+        </mxCell>
+
+        <!-- data/instance-memory/ -->
+        <mxCell id="inst_mem" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="host">
+          <mxGeometry x="20" y="290" width="560" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="im_label" value="&lt;b&gt;data/instance-memory/&lt;/b&gt;" style="text;html=1;fontSize=13;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="inst_mem">
+          <mxGeometry x="10" y="8" width="250" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="im_badge" value="ISOLATED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7B1FA2;fontColor=#FFFFFF;fontSize=9;fontStyle=1;strokeColor=none;" vertex="1" parent="inst_mem">
+          <mxGeometry x="250" y="10" width="65" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="im_desc" value="Per-instance Claude project memory — each instance gets its own subdirectory" style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;" vertex="1" parent="inst_mem">
+          <mxGeometry x="10" y="32" width="500" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- Instance A memory -->
+        <mxCell id="mem_a" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;container=1;collapsible=0;" vertex="1" parent="inst_mem">
+          <mxGeometry x="15" y="60" width="165" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="ma_label" value="&lt;b&gt;customer-a/&lt;/b&gt;" style="text;html=1;fontSize=10;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="mem_a">
+          <mxGeometry x="8" y="5" width="120" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="ma_files" value="CLAUDE.md&#xa;memory/&#xa;  project_context.md&#xa;  feedback_testing.md&#xa;  ...&#xa;settings.local.json" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="mem_a">
+          <mxGeometry x="8" y="28" width="150" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ma_mount" value="→ /workspace/.claude&#xa;  in cm-customer-a-*" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#888888;fontStyle=2;" vertex="1" parent="mem_a">
+          <mxGeometry x="8" y="130" width="150" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Instance B memory -->
+        <mxCell id="mem_b" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;container=1;collapsible=0;" vertex="1" parent="inst_mem">
+          <mxGeometry x="198" y="60" width="165" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb_label" value="&lt;b&gt;customer-b/&lt;/b&gt;" style="text;html=1;fontSize=10;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="mem_b">
+          <mxGeometry x="8" y="5" width="120" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb_files" value="CLAUDE.md&#xa;memory/&#xa;  project_context.md&#xa;  ...&#xa;settings.local.json" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="mem_b">
+          <mxGeometry x="8" y="28" width="150" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb_mount" value="→ /workspace/.claude&#xa;  in cm-customer-b-*" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#888888;fontStyle=2;" vertex="1" parent="mem_b">
+          <mxGeometry x="8" y="130" width="150" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Instance C memory (docs) -->
+        <mxCell id="mem_c" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;container=1;collapsible=0;" vertex="1" parent="inst_mem">
+          <mxGeometry x="381" y="60" width="165" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc_label" value="&lt;b&gt;docs-writer/&lt;/b&gt;" style="text;html=1;fontSize=10;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="mem_c">
+          <mxGeometry x="8" y="5" width="120" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc_files" value="CLAUDE.md&#xa;memory/&#xa;  project_context.md&#xa;  ...&#xa;settings.local.json" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="mem_c">
+          <mxGeometry x="8" y="28" width="150" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc_mount" value="→ /workspace/.claude&#xa;  in cm-docs-writer-*" style="text;html=1;fontSize=8;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#888888;fontStyle=2;" vertex="1" parent="mem_c">
+          <mxGeometry x="8" y="130" width="150" height="30" as="geometry"/>
+        </mxCell>
+
+        <!-- Isolation callout -->
+        <mxCell id="isolation" value="&lt;b&gt;Cognitive isolation:&lt;/b&gt; Instance A cannot see instance B's project memory.&#xa;Each Claude Code instance has its own context, conversation history, and project-specific instructions.&#xa;No cross-contamination of customer data between instances." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=#FCE4EC;strokeColor=#C62828;rounded=1;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="host">
+          <mxGeometry x="20" y="565" width="560" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Docker Volumes -->
+        <mxCell id="volumes" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="host">
+          <mxGeometry x="20" y="655" width="560" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_label" value="&lt;b&gt;Docker Volumes&lt;/b&gt; (managed by Docker Engine, NOT git-tracked)" style="text;html=1;fontSize=13;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="volumes">
+          <mxGeometry x="10" y="8" width="500" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_badge" value="PER-INSTANCE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2E7D32;fontColor=#FFFFFF;fontSize=9;fontStyle=1;strokeColor=none;" vertex="1" parent="volumes">
+          <mxGeometry x="460" y="10" width="85" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_a" value="cmv-customer-a-a1b2c3d4" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=9;fontStyle=1;boundedLbl=1;size=8;" vertex="1" parent="volumes">
+          <mxGeometry x="15" y="40" width="160" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_b" value="cmv-customer-b-e5f6g7h8" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=9;fontStyle=1;boundedLbl=1;size=8;" vertex="1" parent="volumes">
+          <mxGeometry x="195" y="40" width="160" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_c" value="cmv-docs-writer-i9j0k1l2" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=9;fontStyle=1;boundedLbl=1;size=8;" vertex="1" parent="volumes">
+          <mxGeometry x="375" y="40" width="160" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="vol_desc" value="Each volume holds /workspace — the instance's code repos. Instances clone repos independently." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#888888;fontStyle=2;" vertex="1" parent="volumes">
+          <mxGeometry x="15" y="95" width="530" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== CONTAINER VIEW ===== -->
+        <mxCell id="containers" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#999999;strokeWidth=2;dashed=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="680" y="80" width="690" height="820" as="geometry"/>
+        </mxCell>
+        <mxCell id="cont_label" value="Inside each workspace container" style="text;html=1;fontSize=14;fontStyle=1;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#666666;" vertex="1" parent="containers">
+          <mxGeometry x="15" y="8" width="350" height="25" as="geometry"/>
+        </mxCell>
+
+        <!-- Container filesystem view -->
+        <mxCell id="cont_fs" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;container=1;collapsible=0;" vertex="1" parent="containers">
+          <mxGeometry x="20" y="50" width="650" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="fs_label" value="&lt;b&gt;Container filesystem (cm-customer-a-a1b2c3d4)&lt;/b&gt;" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#222222;" vertex="1" parent="cont_fs">
+          <mxGeometry x="10" y="8" width="500" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- /workspace mount -->
+        <mxCell id="fs_workspace" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="cont_fs">
+          <mxGeometry x="15" y="45" width="300" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsw_label" value="&lt;b&gt;/workspace&lt;/b&gt;" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="fs_workspace">
+          <mxGeometry x="10" y="5" width="150" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsw_type" value="Docker volume: cmv-customer-a-*" style="text;html=1;fontSize=8;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#888888;" vertex="1" parent="fs_workspace">
+          <mxGeometry x="10" y="24" width="250" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsw_tree" value="customer-repo/&#xa;  src/&#xa;  package.json&#xa;  brief.md&#xa;  ...&#xa;another-repo/&#xa;  ..." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="fs_workspace">
+          <mxGeometry x="15" y="45" width="200" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- /workspace/.claude mount -->
+        <mxCell id="fs_claude_proj" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="cont_fs">
+          <mxGeometry x="335" y="45" width="300" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsp_label" value="&lt;b&gt;/workspace/.claude&lt;/b&gt;" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#7B1FA2;" vertex="1" parent="fs_claude_proj">
+          <mxGeometry x="10" y="5" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsp_type" value="Bind mount: data/instance-memory/customer-a/" style="text;html=1;fontSize=8;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#888888;" vertex="1" parent="fs_claude_proj">
+          <mxGeometry x="10" y="24" width="280" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsp_tree" value="CLAUDE.md&#xa;memory/&#xa;  MEMORY.md&#xa;  project_context.md&#xa;  feedback_testing.md&#xa;  user_profile.md&#xa;settings.local.json" style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="fs_claude_proj">
+          <mxGeometry x="15" y="45" width="250" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- /home/claude/.claude mount -->
+        <mxCell id="fs_claude_home" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#E65100;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="cont_fs">
+          <mxGeometry x="15" y="225" width="300" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsh_label" value="&lt;b&gt;/home/claude/.claude&lt;/b&gt;" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#E65100;" vertex="1" parent="fs_claude_home">
+          <mxGeometry x="10" y="5" width="200" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsh_type" value="Bind mount: data/claude-home/" style="text;html=1;fontSize=8;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#888888;" vertex="1" parent="fs_claude_home">
+          <mxGeometry x="10" y="24" width="250" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="fsh_tree" value="settings.json&#xa;CLAUDE.md&#xa;memory/&#xa;  global_preferences.md&#xa;  ..." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="fs_claude_home">
+          <mxGeometry x="15" y="45" width="250" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- /shared mount -->
+        <mxCell id="fs_shared" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;container=1;collapsible=0;" vertex="1" parent="cont_fs">
+          <mxGeometry x="335" y="225" width="300" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="fss_label" value="&lt;b&gt;/shared&lt;/b&gt;" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#1565C0;" vertex="1" parent="fs_shared">
+          <mxGeometry x="10" y="5" width="100" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="fss_type" value="Bind mount: data/shared/" style="text;html=1;fontSize=8;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#888888;" vertex="1" parent="fs_shared">
+          <mxGeometry x="10" y="24" width="250" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="fss_tree" value="templates/&#xa;  report-template.md&#xa;scripts/&#xa;  useful-tool.sh&#xa;uploads/&#xa;  latest-data.csv" style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;fontFamily=monospace;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="fs_shared">
+          <mxGeometry x="15" y="45" width="250" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- Key insight: what overlaps -->
+        <mxCell id="overlap" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#F9A825;container=1;collapsible=0;" vertex="1" parent="cont_fs">
+          <mxGeometry x="15" y="385" width="620" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov_label" value="&lt;b&gt;How mounts compose inside the container&lt;/b&gt;" style="text;html=1;fontSize=11;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#F9A825;" vertex="1" parent="overlap">
+          <mxGeometry x="10" y="5" width="350" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="ov_desc" value="&lt;b&gt;/workspace/.claude&lt;/b&gt; is a bind mount OVER the volume at /workspace — Docker overlays it.&#xa;This means the volume holds code repos, but .claude/ comes from the host's per-instance memory dir.&#xa;&#xa;&lt;b&gt;/home/claude/.claude&lt;/b&gt; is the shared global config — settings, CLAUDE.md, and global memory.&#xa;Claude Code reads project-level config from /workspace/.claude and user-level from ~/.claude.&#xa;Result: shared global prefs + memory, isolated project context, and per-instance auth." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="overlap">
+          <mxGeometry x="10" y="25" width="600" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- Shared config callout -->
+        <mxCell id="shared_config" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;container=1;collapsible=0;" vertex="1" parent="containers">
+          <mxGeometry x="20" y="590" width="650" height="195" as="geometry"/>
+        </mxCell>
+        <mxCell id="sc_label" value="&lt;b&gt;Shared config, per-instance auth&lt;/b&gt;" style="text;html=1;fontSize=13;align=left;verticalAlign=top;fillColor=none;strokeColor=none;fontColor=#2E7D32;" vertex="1" parent="shared_config">
+          <mxGeometry x="10" y="8" width="400" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="sc_desc" value="data/claude-home/ is bind-mounted as ~/.claude in every instance, so these are shared:&#xa;&#xa;  • settings.json — Claude preferences&#xa;  • CLAUDE.md — global instructions (e.g. brief.md convention)&#xa;  • memory/ — global memories&#xa;&#xa;&lt;b&gt;Auth is NOT shared.&lt;/b&gt; Each container runs its own:&#xa;  • &amp;quot;claude login&amp;quot; (Max) — credentials live inside the container, not in data/&#xa;  • &amp;quot;gh auth login&amp;quot; (device flow) — GitHub token in ~/.config/gh/, per-container&#xa;&#xa;Backup: clone the repo + docker compose up → settings and memory are restored.&#xa;Each instance re-auths on first use. No cross-contamination of credentials between instances." style="text;html=1;fontSize=9;align=left;verticalAlign=top;overflow=hidden;fillColor=none;strokeColor=none;fontColor=#555555;spacingLeft=10;spacingTop=5;spacingRight=10;spacingBottom=5;" vertex="1" parent="shared_config">
+          <mxGeometry x="10" y="30" width="630" height="155" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== CONNECTION ARROWS ===== -->
+        <!-- shared/ → /shared -->
+        <mxCell id="e_shared" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565C0;strokeWidth=2;dashed=1;" edge="1" source="shared" target="fs_shared" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="650" y="170"/>
+              <mxPoint x="650" y="425"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- claude-home/ → ~/.claude -->
+        <mxCell id="e_claude" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#E65100;strokeWidth=2;dashed=1;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.12;entryDx=0;entryDy=0;" edge="1" source="claude_home" target="fs_claude_home" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="184"/>
+              <mxPoint x="660" y="372"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- instance-memory/ → /workspace/.claude -->
+        <mxCell id="e_memory" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#7B1FA2;strokeWidth=2;dashed=1;" edge="1" source="mem_a" target="fs_claude_proj" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="460"/>
+              <mxPoint x="640" y="205"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- volumes → /workspace -->
+        <mxCell id="e_volume" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2E7D32;strokeWidth=2;dashed=1;" edge="1" source="vol_a" target="fs_workspace" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="670" y="776"/>
+              <mxPoint x="670" y="205"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

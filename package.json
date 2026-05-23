@@ -1,0 +1,54 @@
+{
+  "name": "claude-manager",
+  "version": "1.0.0",
+  "description": "Self-hosted Docker container management UI for Claude Code workspaces",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently -n server,client \"node server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "npm run build && node server/index.js",
+    "test": "node tests/run-all.js",
+    "test:lint": "node --test tests/00-config-lint.test.js",
+    "test:auth": "node --test tests/01-auth.test.js",
+    "test:api": "node --test tests/02-instances-api.test.js",
+    "test:terminal": "node --test tests/03-terminal.test.js",
+    "test:stability": "node --test tests/04-stability.test.js",
+    "test:stress": "node --test tests/05-terminal-stress.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FrederikLeed/claude-manager-public.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/FrederikLeed/claude-manager-public/issues"
+  },
+  "homepage": "https://github.com/FrederikLeed/claude-manager-public#readme",
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/static": "^9.1.0",
+    "@fastify/websocket": "^11.2.0",
+    "better-sqlite3": "^12.8.0",
+    "dockerode": "^4.0.10",
+    "dotenv": "^17.4.1",
+    "fastify": "^5.8.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "postcss": "^8.5.9",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tailwindcss": "^3.4.19",
+    "vite": "^8.0.8"
+  }
+}
