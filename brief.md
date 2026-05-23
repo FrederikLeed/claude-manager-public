@@ -95,4 +95,4 @@ docker compose --profile test run --rm test
 
 ## Roadmap
 
-- Publish project
+See [docs/roadmap.md](docs/roadmap.md) and the [GitHub issues](https://github.com/FrederikLeed/claude-manager-public/issues) for what's planned next.
