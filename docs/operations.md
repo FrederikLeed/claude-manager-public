@@ -1,11 +1,9 @@
-# Claude Manager v2 — Operations Guide
+# Claude Manager — Operations Guide
 
-Day-to-day operations guide for the v2 dashboard. The dashboard runs
-on port **3002** (`docker-compose.v2.yml`). For prerequisites and
+Day-to-day operations guide for the dashboard. The dashboard runs
+on port **3002** (`docker-compose.yml`). For prerequisites and
 initial setup, see [deployment.md](deployment.md); for the design
 behind these features, see [architecture.md](architecture.md).
-
-> The legacy v1 stack (port 3000) is not covered here.
 
 ---
 
@@ -136,7 +134,7 @@ Containers without `claude-manager.managed=true` appear with an
 
 - Use the configured `claude-workspace` image, **or**
 - Have a name starting with `claude-` (except `claude-manager` /
-  `claude-manager-v2`).
+  `claude-manager`).
 
 Click **Adopt** to track them by `docker_id` (labels can't be added to
 running containers). Full management — start/stop/remove/terminal —
@@ -384,10 +382,10 @@ out.
 ### Logs
 
 ```bash
-docker compose -f docker-compose.v2.yml logs claude-manager-v2 --tail 50 -f
-docker compose -f docker-compose.v2.yml logs cm-proxy --tail 50
-docker compose -f docker-compose.v2.yml logs cm-litellm --tail 50
-docker compose -f docker-compose.v2.yml logs cm-ollama --tail 50
+docker compose -f docker-compose.yml logs claude-manager --tail 50 -f
+docker compose -f docker-compose.yml logs cm-proxy --tail 50
+docker compose -f docker-compose.yml logs cm-litellm --tail 50
+docker compose -f docker-compose.yml logs cm-ollama --tail 50
 ```
 
 ---
@@ -396,7 +394,7 @@ docker compose -f docker-compose.v2.yml logs cm-ollama --tail 50
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| SQLite DB | Docker volume `claude-manager-v2-data` → `/data/manager.db` | Instance metadata, devices, grants, access requests, LiteLLM keys, activity log |
+| SQLite DB | Docker volume `claude-manager-data` → `/data/manager.db` | Instance metadata, devices, grants, access requests, LiteLLM keys, activity log |
 | Per-instance workspace | Docker volume `cm-workspace-{slug}-{id}` | Code & files at `/workspace` |
 | Per-instance project memory | `data/instance-memory/{slug}/` on host | Mounted at `/workspace/.claude` (isolated, git-tracked) |
 | Global Claude config | `data/claude-home/` on host | Mounted at `/home/claude/.claude` (shared, git-tracked, auth gitignored) |

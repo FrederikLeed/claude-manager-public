@@ -68,10 +68,45 @@ export function initDb() {
     )
   `);
 
-  // Migration: add docker_id column if missing (existing databases)
+  // v2: Capability grants table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS capability_grants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      instance_id TEXT NOT NULL,
+      capability_name TEXT NOT NULL,
+      granted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      source TEXT DEFAULT 'manual',
+      active INTEGER DEFAULT 1,
+      UNIQUE(instance_id, capability_name)
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_grants_instance ON capability_grants(instance_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_grants_expiry ON capability_grants(expires_at) WHERE active = 1');
+
+  // v2: Access requests (instance → admin approval flow)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS access_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      instance_id TEXT NOT NULL,
+      requested_policy TEXT,
+      requested_hosts TEXT,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT,
+      resolved_by TEXT
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_access_req_instance ON access_requests(instance_id)');
+
+  // Migrations
   const columns = db.prepare("PRAGMA table_info(instances)").all();
   if (!columns.some((c) => c.name === 'docker_id')) {
     db.exec('ALTER TABLE instances ADD COLUMN docker_id TEXT');
+  }
+  if (!columns.some((c) => c.name === 'litellm_key')) {
+    db.exec('ALTER TABLE instances ADD COLUMN litellm_key TEXT');
   }
 
   return db;
@@ -213,6 +248,101 @@ export function revokeDevice(id) {
 
 export function updateDeviceName(id, name) {
   db.prepare('UPDATE devices SET name = ? WHERE id = ?').run(name, id);
+}
+
+// --- Capability grants ---
+
+export function createGrant({ instanceId, capabilityName, expiresAt, source = 'manual' }) {
+  return db.prepare(`
+    INSERT INTO capability_grants (instance_id, capability_name, expires_at, source)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(instance_id, capability_name) DO UPDATE SET
+      expires_at = excluded.expires_at,
+      source = excluded.source,
+      active = 1,
+      granted_at = datetime('now')
+  `).run(instanceId, capabilityName, expiresAt, source);
+}
+
+export function getGrantsForInstance(instanceId) {
+  return db.prepare('SELECT * FROM capability_grants WHERE instance_id = ? AND active = 1').all(instanceId);
+}
+
+export function getActiveGrant(instanceId, capabilityName) {
+  return db.prepare('SELECT * FROM capability_grants WHERE instance_id = ? AND capability_name = ? AND active = 1').get(instanceId, capabilityName);
+}
+
+export function getExpiredGrants() {
+  return db.prepare("SELECT * FROM capability_grants WHERE active = 1 AND expires_at < datetime('now')").all();
+}
+
+export function renewGrant(id, newExpiresAt) {
+  db.prepare('UPDATE capability_grants SET expires_at = ?, active = 1 WHERE id = ?').run(newExpiresAt, id);
+}
+
+export function deactivateGrant(id) {
+  db.prepare('UPDATE capability_grants SET active = 0 WHERE id = ?').run(id);
+}
+
+export function deleteGrantsForInstance(instanceId) {
+  db.prepare('DELETE FROM capability_grants WHERE instance_id = ?').run(instanceId);
+}
+
+export function getGrantById(id) {
+  return db.prepare('SELECT * FROM capability_grants WHERE id = ?').get(id);
+}
+
+// --- LiteLLM key management ---
+
+export function setLiteLLMKey(instanceId, key) {
+  db.prepare('UPDATE instances SET litellm_key = ? WHERE id = ?').run(key, instanceId);
+}
+
+export function getLiteLLMKey(instanceId) {
+  const row = db.prepare('SELECT litellm_key FROM instances WHERE id = ?').get(instanceId);
+  return row?.litellm_key || null;
+}
+
+export function clearLiteLLMKey(instanceId) {
+  db.prepare('UPDATE instances SET litellm_key = NULL WHERE id = ?').run(instanceId);
+}
+
+// --- Access requests ---
+
+export function createAccessRequest({ instanceId, requestedPolicy, requestedHosts, reason }) {
+  const stmt = db.prepare(`
+    INSERT INTO access_requests (instance_id, requested_policy, requested_hosts, reason)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(instanceId, requestedPolicy || null, requestedHosts ? JSON.stringify(requestedHosts) : null, reason || null);
+  return { id: result.lastInsertRowid, instanceId, requestedPolicy, requestedHosts, reason, status: 'pending' };
+}
+
+export function getPendingAccessRequests() {
+  const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'pending' ORDER BY created_at DESC").all();
+  return rows.map(parseAccessRequest);
+}
+
+export function getAccessRequestsForInstance(instanceId) {
+  const rows = db.prepare("SELECT * FROM access_requests WHERE instance_id = ? ORDER BY created_at DESC").all(instanceId);
+  return rows.map(parseAccessRequest);
+}
+
+export function getAccessRequestById(id) {
+  const row = db.prepare('SELECT * FROM access_requests WHERE id = ?').get(id);
+  return row ? parseAccessRequest(row) : null;
+}
+
+export function resolveAccessRequest(id, status, resolvedBy) {
+  db.prepare("UPDATE access_requests SET status = ?, resolved_at = datetime('now'), resolved_by = ? WHERE id = ?")
+    .run(status, resolvedBy, id);
+}
+
+function parseAccessRequest(row) {
+  return {
+    ...row,
+    requested_hosts: row.requested_hosts ? JSON.parse(row.requested_hosts) : null,
+  };
 }
 
 export function closeDb() {

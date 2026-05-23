@@ -3,7 +3,7 @@
  * Test runner — runs all test files sequentially.
  * Usage: node tests/run-all.js [filter]
  *
- * Requires a running dev server at localhost:3001.
+ * Requires a running dev server at localhost:3002.
  * Tests create and destroy real Docker containers.
  */
 import { execFileSync } from 'child_process';
@@ -15,11 +15,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const filter = process.argv[2];
 
 // Verify dev server is running
+const apiBase = process.env.TEST_API_BASE || 'http://localhost:3002';
 try {
-  const response = await fetch('http://localhost:3001/api/auth/status');
+  const response = await fetch(`${apiBase}/api/auth/status`);
   if (!response.ok) throw new Error(`Status ${response.status}`);
 } catch {
-  console.error('\n  Dev server not running at localhost:3001');
+  console.error(`\n  Dev server not running at ${apiBase}`);
   console.error('   Start with: DATA_DIR=/tmp/cm-test-data npm run dev\n');
   process.exit(1);
 }

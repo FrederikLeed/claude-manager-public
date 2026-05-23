@@ -6,8 +6,6 @@ This repository contains everything needed to run the stack — the manager UI, 
 
 ![Claude Manager Dashboard](docs/screenshot-dashboard.png)
 
-> **v2 is the active version** (port 3002, `docker-compose.v2.yml`). v1 still runs on port 3000 (`docker-compose.yml`) as legacy. This README documents v2.
-
 **[Overview](#overview)** · **[Architecture](#architecture)** · **[Network Policy](#network-policy)** · **[LLM Backends](#llm-backends)** · **[Data & Auth](#data--auth)** · **[Terminal](#terminal)** · **[Setup](#setup)**
 
 ---
@@ -16,7 +14,7 @@ This repository contains everything needed to run the stack — the manager UI, 
 
 ### At a Glance
 
-Everything Claude Manager v2 gives the operator, on one page.
+Everything Claude Manager gives the operator, on one page.
 
 ![Capabilities](docs/diagrams/capabilities.png)
 
@@ -58,9 +56,9 @@ Everything Claude Manager v2 gives the operator, on one page.
 
 ### How It Differs from Native Claude Code
 
-Claude Code (2.1.112) ships with worktrees, auto memory, a reference DevContainer config, and session resume. Those solve isolation for **single-user CLI workflows**. Claude Manager v2 fills a different niche:
+Claude Code (2.1.112) ships with worktrees, auto memory, a reference DevContainer config, and session resume. Those solve isolation for **single-user CLI workflows**. Claude Manager fills a different niche:
 
-| Need | Native Claude Code | Claude Manager v2 |
+| Need | Native Claude Code | Claude Manager |
 |---|---|---|
 | Multi-container orchestration | None | Yes, from one dashboard |
 | Full container isolation | Worktrees (same filesystem) | Separate FS, auth, memory per instance |
@@ -84,7 +82,7 @@ Six containers, one bridge network. The manager creates and tears down workspace
 
 | Container | Source | Role |
 |---|---|---|
-| `claude-manager-v2` | `v2/Dockerfile` | Fastify 5 backend + React 19 frontend |
+| `claude-manager` | `Dockerfile` | Fastify 5 backend + React 19 frontend |
 | `cm-proxy` | `proxy/Dockerfile` | squid forward proxy — per-container network ACLs |
 | `cm-litellm` | `litellm/Dockerfile` | LiteLLM proxy — Claude API → Ollama / Azure |
 | `cm-ollama` | `ollama/ollama` | Qwen3 30B-A3B on NVIDIA GPU |
@@ -177,20 +175,21 @@ Per-instance isolation with shared global config. Git-tracked for backup — pus
 
 ```
 claude-manager/
-├── data/                          ← git-tracked, your backup
-│   ├── shared/                    ← /shared in all instances
-│   ├── claude-home/               ← /home/claude/.claude (global config + memory, auth gitignored)
+├── data/                          <- git-tracked, your backup
+│   ├── shared/                    <- /shared in all instances
+│   ├── claude-home/               <- /home/claude/.claude (global config + memory, auth gitignored)
 │   │   ├── settings.json
-│   │   ├── CLAUDE.md              ← global agent instructions (incl. cm-access workflow)
-│   │   └── memory/                ← global memories
-│   └── instance-memory/           ← per-instance project memory
-│       ├── customer-a/            ← /workspace/.claude in customer-a instance
+│   │   ├── CLAUDE.md              <- global agent instructions (incl. cm-access workflow)
+│   │   └── memory/                <- global memories
+│   └── instance-memory/           <- per-instance project memory
+│       ├── customer-a/            <- /workspace/.claude in customer-a instance
 │       └── ...
+├── server/                        <- Fastify backend
+├── src/                           <- React frontend
 ├── workspace/
-│   └── policies/                  ← YAML — bind-mounted into manager as /policies (RO)
-├── v2/                            ← active manager (backend + frontend)
-├── proxy/ · litellm/              ← sidecar images
-└── workspace/                     ← claude-workspace image source
+│   └── policies/                  <- YAML — bind-mounted into manager as /policies (RO)
+├── proxy/ · litellm/              <- sidecar images
+└── workspace/                     <- claude-workspace image source
 ```
 
 **Isolation model:**
@@ -199,7 +198,7 @@ claude-manager/
 - Auth is per-instance: each instance runs its own `claude login` (Max) and `gh auth login`
 - `/shared` is explicitly shared for cross-instance files, templates, tools
 
-**Backup:** Push to GitHub. If your machine dies, clone the repo and `docker compose -f docker-compose.v2.yml up` — settings and memory are restored. Each instance re-auths on first use.
+**Backup:** Push to GitHub. If your machine dies, clone the repo and `docker compose up` — settings and memory are restored. Each instance re-auths on first use.
 
 ### Manager Database Schema
 
@@ -240,28 +239,19 @@ Connect to the same tmux session from multiple devices — desktop and mobile se
 ### Quick Start
 
 ```bash
-git clone https://github.com/FrederikLeed/claude-manager-public.git && cd claude-manager
-cp .env.example .env                                       # set absolute host paths + LiteLLM keys
-docker compose -f docker-compose.v2.yml --profile build-only build
-docker compose -f docker-compose.v2.yml up -d
+git clone https://github.com/FrederikLeed/claude-manager-public.git && cd claude-manager-public
+cp .env.example .env                               # set absolute host paths + LiteLLM keys
+docker compose --profile build-only build           # build all images
+docker compose up -d                                # start the stack
 ```
 
 Open [http://localhost:3002](http://localhost:3002) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 
-### Local Development
-
-```bash
-npm install
-npm run dev          # Fastify on :3001, Vite on :5173 with API proxy (v1)
-# v2 frontend lives under v2/, build via Docker image
-npm run build
-```
-
 ### Docker Build
 
 ```bash
-docker compose -f docker-compose.v2.yml --profile build-only build   # all three buildable images
-docker compose -f docker-compose.v2.yml up -d                        # start the stack
+docker compose --profile build-only build   # all buildable images (manager, proxy, litellm, workspace)
+docker compose up -d                        # start the stack
 ```
 
 ### Tech Stack
@@ -279,15 +269,16 @@ docker compose -f docker-compose.v2.yml up -d                        # start the
 
 ### Repository Layout
 
-- `v2/` — active manager backend (Fastify) + frontend (React)
+- `server/` — Fastify backend (REST API, WebSocket, Docker management)
+- `src/` — React frontend (dashboard, terminal, modals)
+- `shared/` — shared constants (network policies, LLM backends)
+- `policies/` — network policy YAML files
+- `tests/` — integration test suite (Docker-backed)
 - `proxy/` — `cm-proxy` image (squid + inotify watcher)
 - `litellm/` — `cm-litellm` image (LiteLLM + `config.yaml`)
 - `workspace/` — workspace Docker image source (Ubuntu 24.04 + Claude Code + `cm-access`)
-- `workspace/policies/` — YAML policies, bind-mounted into the manager
 - `data/` — runtime config, global memory, per-instance memory (git-tracked)
-- `docs/diagrams/` — source + rendered PNGs
-- `tests/` + `v2/tests/` — integration test suites (Docker-backed)
-- `server/` + `src/` — legacy v1 (port 3000)
+- `docs/` — architecture docs, deployment guide, diagrams
 
 <details>
 <summary><b>Diagram tooling</b> — every diagram source + render command</summary>
@@ -308,15 +299,9 @@ Every diagram is generated from a plain-text source file. Edit the source, re-re
 | Terminal protocol | `terminal-protocol.puml` | PlantUML | `java -jar plantuml.jar -tpng terminal-protocol.puml` |
 | LLM routing | `llm-routing.dot` | Graphviz | `dot -Tpng llm-routing.dot -o llm-routing.png` |
 
-Old `.drawio` sources are archived in `docs/diagrams/archive/`.
 </details>
 
 ### Roadmap
 
 Phase 1 (instance management), Phase 2 (observability, shared terminals), and the network-policy work originally planned as Phase 3.5 are all shipped. See [docs/roadmap.md](docs/roadmap.md) and [GitHub issues](https://github.com/FrederikLeed/claude-manager-public/issues).
 
----
-
-## License
-
-[ISC](LICENSE)

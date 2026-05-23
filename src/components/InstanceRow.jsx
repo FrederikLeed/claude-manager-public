@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import StatusBadge from './StatusBadge.jsx';
+import GrantBadge from './GrantBadge.jsx';
+import { AccessRequestBadge } from './AccessRequests.jsx';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -9,7 +11,7 @@ function timeAgo(unixTimestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting }) {
+export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting, onPolicyClick, onGrantClick }) {
   const [stopping, setStopping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [recreating, setRecreating] = useState(false);
@@ -45,28 +47,59 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
           {instance.name}
         </span>
 
-        {/* Docker socket toggle */}
+        {/* Badges */}
         {managed && (
-          <button
-            onClick={async () => {
-              const next = !instance.dockerSocket;
-              const msg = next
-                ? 'Enable Docker socket? Container will be recreated.'
-                : 'Disable Docker socket? Container will be recreated.';
-              if (!window.confirm(msg)) return;
-              setRecreating(true);
-              try { await onRecreate(instance.id, { dockerSocket: next }); } finally { setRecreating(false); }
-            }}
-            disabled={busy}
-            className={`text-[10px] border rounded px-1 py-0.5 shrink-0 hidden sm:block transition-colors ${
-              instance.dockerSocket
-                ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
-                : 'text-gray-600 border-gray-700 hover:text-gray-400 hover:border-gray-600'
-            }`}
-            title={instance.dockerSocket ? 'Docker socket enabled — click to disable (recreates container)' : 'Docker socket disabled — click to enable (recreates container)'}
-          >
-            {recreating ? '...' : 'Docker'}
-          </button>
+          <>
+            <button
+              onClick={async () => {
+                const next = !instance.dockerSocket;
+                const msg = next
+                  ? 'Enable Docker socket? Container will be recreated.'
+                  : 'Disable Docker socket? Container will be recreated.';
+                if (!window.confirm(msg)) return;
+                setRecreating(true);
+                try { await onRecreate(instance.id, { dockerSocket: next }); } finally { setRecreating(false); }
+              }}
+              disabled={busy}
+              className={`text-[10px] border rounded px-1 py-0.5 shrink-0 hidden sm:block transition-colors ${
+                instance.dockerSocket
+                  ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
+                  : 'text-gray-600 border-gray-700 hover:text-gray-400 hover:border-gray-600'
+              }`}
+              title={instance.dockerSocket ? 'Docker socket enabled — click to disable (recreates container)' : 'Docker socket disabled — click to enable (recreates container)'}
+            >
+              {recreating ? '...' : 'Docker'}
+            </button>
+            {instance.networkPolicy && (
+              <button
+                onClick={() => onPolicyClick?.({ policy: instance.networkPolicy, instanceId: instance.id })}
+                className={`text-[10px] border rounded px-1 py-0.5 shrink-0 hidden sm:block transition-colors ${
+                  instance.networkPolicy === 'unrestricted'
+                    ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
+                    : 'text-blue-400 border-blue-800 hover:bg-blue-900/30'
+                }`}
+                title={`Network access: ${instance.networkPolicy} — click for details`}
+              >
+                {instance.networkPolicy}{instance.hasCustomHosts ? '++' : ''}
+              </button>
+            )}
+            {instance.llmBackend && instance.llmBackend !== 'claude-max' && (
+              <span
+                className="text-[10px] border rounded px-1 py-0.5 shrink-0 hidden sm:block text-purple-400 border-purple-800"
+                title={`LLM: ${instance.llmBackend}`}
+              >
+                {instance.llmBackend === 'local-llm' ? 'Local LLM' : instance.llmBackend === 'foundry' ? 'GPT-4.1-mini' : instance.llmBackend === 'foundry-latest' ? 'GPT Latest' : instance.llmBackend}
+              </span>
+            )}
+            {instance.grants?.filter((g) => g.active).map((grant) => (
+              <GrantBadge
+                key={grant.id}
+                grant={grant}
+                onClick={() => onGrantClick?.(instance.id)}
+              />
+            ))}
+            <AccessRequestBadge count={instance.pendingRequests} />
+          </>
         )}
 
         {/* Image — desktop only */}

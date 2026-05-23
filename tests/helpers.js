@@ -1,9 +1,10 @@
 /**
- * Shared test helpers for claude-manager integration tests.
- * Uses the running dev server at localhost:3001.
+ * Shared test helpers for claude-manager v2 integration tests.
+ * Uses the running v2 dev server at localhost:3002.
  */
 
-const API_BASE = process.env.TEST_API_BASE || 'http://localhost:3001';
+const API_BASE = process.env.TEST_API_BASE || 'http://localhost:3002';
+const WS_BASE = API_BASE.replace(/^http/, 'ws');
 let _cookie = null;
 
 /**
@@ -48,7 +49,7 @@ export async function api(path, options = {}) {
  * Uses a well-known token. If a device already exists from a prior session,
  * re-uses it. Otherwise registers fresh (first device = auto-admin).
  */
-export async function authenticate(token = 'test-device-token-1234567890') {
+export async function authenticate(token = 'first-device-token-for-testing-001') {
   const result = await api('/api/auth/register', {
     method: 'POST',
     body: { token, name: 'Integration Test' },
@@ -112,7 +113,7 @@ export function getAuthCookie() {
  * Connect a WebSocket to an endpoint. Returns { ws, messages, close }.
  */
 export function connectWS(path) {
-  const url = `ws://localhost:3001${path}`;
+  const url = `${WS_BASE}${path}`;
   // Node 22 has built-in WebSocket — pass cookie via headers
   const ws = new WebSocket(url, { headers: { Cookie: _cookie || '' } });
   const messages = [];
@@ -165,4 +166,44 @@ export async function cleanupTestInstances() {
 
 export function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+/**
+ * Create a test instance with a network policy.
+ */
+export async function createTestInstanceWithPolicy(name, policy, options = {}) {
+  return createTestInstance(name, { networkPolicy: policy, ...options });
+}
+
+/**
+ * Execute a command inside a running test instance.
+ */
+export async function execInInstance(id, cmd) {
+  const result = await api(`/api/instances/${id}/exec`, {
+    method: 'POST',
+    body: { cmd },
+  });
+  return result;
+}
+
+/**
+ * Make a direct LiteLLM API call (for test verification).
+ */
+const LITELLM_BASE = process.env.LITELLM_TEST_URL || 'http://localhost:4000';
+export async function litellmApi(path, options = {}) {
+  const { method = 'GET', body } = options;
+  const masterKey = process.env.LITELLM_MASTER_KEY || 'sk-litellm-master-key';
+  const headers = {
+    'Authorization': `Bearer ${masterKey}`,
+  };
+  if (body) headers['Content-Type'] = 'application/json';
+
+  const fetchOptions = { method, headers };
+  if (body) fetchOptions.body = JSON.stringify(body);
+
+  const response = await fetch(`${LITELLM_BASE}${path}`, fetchOptions);
+  const text = await response.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = null; }
+  return { status: response.status, json, text };
 }

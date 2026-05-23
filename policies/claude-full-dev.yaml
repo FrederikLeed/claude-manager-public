@@ -2,7 +2,6 @@ name: claude-full-dev
 description: Claude + GitHub + package registries (npm, PyPI, Cargo, Docker Hub) — for tasks that need dependency installs
 allowed_hosts:
   - api.anthropic.com
-  - platform.claude.com
   - statsig.anthropic.com
   - sentry.io
   # GitHub

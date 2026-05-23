@@ -16,6 +16,12 @@ import terminalRoutes, { closeAllSessions, getActiveSessionCount } from './route
 import systemRoutes from './routes/system.js';
 import sharedRoutes from './routes/shared.js';
 import authRoutes from './routes/auth.js';
+import grantRoutes from './routes/grants.js';
+import litellmRoutes from './routes/litellm.js';
+import policyRoutes from './routes/policies.js';
+import accessRequestRoutes from './routes/access-requests.js';
+import { checkExpiredGrants } from './grants.js';
+import { syncAllACLs } from './proxy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,9 +77,19 @@ async function start() {
   await fastify.register(terminalRoutes);
   await fastify.register(systemRoutes);
   await fastify.register(sharedRoutes);
+  await fastify.register(grantRoutes);
+  await fastify.register(litellmRoutes);
+  await fastify.register(policyRoutes);
+  await fastify.register(accessRequestRoutes);
 
-  // Graceful shutdown — close terminal sessions, event stream, DB
+  // Start grant expiry checker (every 60s)
+  const grantCheckInterval = setInterval(() => {
+    checkExpiredGrants(null, fastify.log);
+  }, 60_000);
+
+  // Graceful shutdown — close terminal sessions, event stream, grant timer, DB
   fastify.addHook('onClose', () => {
+    clearInterval(grantCheckInterval);
     const sessionCount = getActiveSessionCount();
     if (sessionCount > 0) {
       fastify.log.info(`Closing ${sessionCount} active terminal sessions...`);
@@ -97,6 +113,10 @@ async function start() {
     const containers = await listManagedContainers();
     syncWithDocker(containers);
     fastify.log.info(`Synced ${containers.length} managed containers`);
+
+    // Sync proxy ACLs for all running containers
+    await syncAllACLs();
+    fastify.log.info('Proxy ACLs synced');
   } catch (err) {
     fastify.log.error({ err }, 'Startup initialization failed');
     // Continue anyway — Docker may not be available in dev without socket

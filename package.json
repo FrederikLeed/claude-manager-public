@@ -1,7 +1,7 @@
 {
-  "name": "claude-manager",
-  "version": "1.0.0",
-  "description": "Self-hosted Docker container management UI for Claude Code workspaces",
+  "name": "claude-manager-v2",
+  "version": "2.0.0",
+  "description": "Claude Manager v2 — network policies, capability grants, LiteLLM proxy",
   "type": "module",
   "main": "server/index.js",
   "scripts": {
@@ -13,21 +13,13 @@
     "test:lint": "node --test tests/00-config-lint.test.js",
     "test:auth": "node --test tests/01-auth.test.js",
     "test:api": "node --test tests/02-instances-api.test.js",
-    "test:terminal": "node --test tests/03-terminal.test.js",
-    "test:stability": "node --test tests/04-stability.test.js",
-    "test:stress": "node --test tests/05-terminal-stress.test.js"
+    "test:policy": "node --test tests/03-network-policy.test.js",
+    "test:grants": "node --test tests/04-capability-grants.test.js",
+    "test:workspace": "node --test tests/05-workspace-image.test.js",
+    "test:litellm": "node --test tests/06-litellm.test.js",
+    "test:terminal": "node --test tests/07-terminal.test.js",
+    "test:stability": "node --test tests/08-stability.test.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/FrederikLeed/claude-manager-public.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/FrederikLeed/claude-manager-public/issues"
-  },
-  "homepage": "https://github.com/FrederikLeed/claude-manager-public#readme",
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",

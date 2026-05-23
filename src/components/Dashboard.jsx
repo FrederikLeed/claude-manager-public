@@ -8,6 +8,10 @@ import TerminalPanel from './Terminal.jsx';
 import ActivityLog from './ActivityLog.jsx';
 import ToastContainer, { showToast } from './Toast.jsx';
 import DeviceManager from './DeviceManager.jsx';
+import PolicyPreview from './PolicyPreview.jsx';
+import GrantActions from './GrantActions.jsx';
+import LiteLLMPanel from './LiteLLMPanel.jsx';
+import AccessRequests from './AccessRequests.jsx';
 
 let tabCounter = 0;
 
@@ -23,6 +27,10 @@ export default function Dashboard({ isAdmin, deviceId }) {
   const [activityRefresh, setActivityRefresh] = useState(0);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [showDevices, setShowDevices] = useState(false);
+  const [policyPreview, setPolicyPreview] = useState(null); // {policy, instanceId}
+  const [grantInstanceId, setGrantInstanceId] = useState(null);
+  const [litellmInstanceId, setLitellmInstanceId] = useState(null);
+  const [accessRequestRefresh, setAccessRequestRefresh] = useState(0);
   const fileInputRef = useRef(null);
 
   // Terminal tabs state
@@ -91,7 +99,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
     try {
       await recreate(id, opts);
       bumpActivity();
-      showToast(`Docker socket ${opts.dockerSocket ? 'enabled' : 'disabled'} (container recreated)`, 'success');
+      showToast('Container recreated', 'success');
     } catch (err) {
       showToast(err.message || 'Failed to recreate', 'error');
       throw err;
@@ -286,6 +294,13 @@ export default function Dashboard({ isAdmin, deviceId }) {
           </div>
         )}
 
+        {/* Access Requests — pending approval */}
+        <AccessRequests
+          instances={instances}
+          refreshTrigger={accessRequestRefresh}
+          onResolved={() => { refresh(); bumpActivity(); setAccessRequestRefresh(n => n + 1); }}
+        />
+
         {/* Container list/grid — collapsible with view toggle */}
         {!loading && totalCount > 0 && (
           <div>
@@ -337,6 +352,8 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     onRecreate={wrappedRecreate}
                     onAdopt={handleAdopt}
                     adopting={!item._managed && adopting.has(item.dockerId)}
+                    onPolicyClick={setPolicyPreview}
+                    onGrantClick={setGrantInstanceId}
                   />
                 ))}
               </div>
@@ -355,6 +372,8 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     onRecreate={wrappedRecreate}
                     onAdopt={handleAdopt}
                     adopting={!item._managed && adopting.has(item.dockerId)}
+                    onPolicyClick={setPolicyPreview}
+                    onGrantClick={setGrantInstanceId}
                   />
                 ))}
               </div>
@@ -380,6 +399,36 @@ export default function Dashboard({ isAdmin, deviceId }) {
           defaultImage={systemInfo?.defaultImage || ''}
           onSubmit={wrappedCreate}
           onClose={() => setShowNewModal(false)}
+        />
+      )}
+
+      {/* Policy Preview Modal */}
+      {policyPreview && (
+        <PolicyPreview
+          policyName={policyPreview.policy}
+          instanceId={policyPreview.instanceId}
+          onClose={() => setPolicyPreview(null)}
+        />
+      )}
+
+      {/* Grant Actions Modal */}
+      {grantInstanceId && (() => {
+        const inst = instances.find((i) => i.id === grantInstanceId);
+        const grants = inst?.grants || [];
+        return grants.length > 0 ? (
+          <GrantActions
+            grants={grants}
+            onAction={() => { refresh(); setGrantInstanceId(null); }}
+            onClose={() => setGrantInstanceId(null)}
+          />
+        ) : null;
+      })()}
+
+      {/* LiteLLM Panel */}
+      {litellmInstanceId && (
+        <LiteLLMPanel
+          instanceId={litellmInstanceId}
+          onClose={() => setLitellmInstanceId(null)}
         />
       )}
 

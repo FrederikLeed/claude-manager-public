@@ -4,24 +4,120 @@ services:
     container_name: claude-manager
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3002:3002"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - claude-manager-data:/data
       - ${SHARED_DIR:-./data/shared}:/shared
       - ${INSTANCE_MEMORY_BASE_DIR:-./data/instance-memory}:/instance-memory
+      - ${CLAUDE_HOME_DIR:-./data/claude-home}:/claude-home
+      - ./workspace/policies:/policies:ro
+      - proxy-acl:/proxy-acl
     environment:
+      - PORT=3002
       - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
       - CLAUDE_NETWORK=claude-manager-net
       - MAX_INSTANCES=${MAX_INSTANCES:-20}
-      # Host paths to bind-mount into new instances (must be absolute HOST paths)
       - INSTANCE_SHARED_DIR=${INSTANCE_SHARED_DIR:-}
       - INSTANCE_MEMORY_DIR=${INSTANCE_MEMORY_DIR:-}
       - INSTANCE_CLAUDE_DIR=${INSTANCE_CLAUDE_DIR:-}
       - INSTANCE_MEMORY_BASE_DIR=${INSTANCE_MEMORY_BASE_DIR:-}
       - ADMIN_RESET_TOKEN=${ADMIN_RESET_TOKEN:-}
+      - DEFAULT_NETWORK_POLICY=${DEFAULT_NETWORK_POLICY:-unrestricted}
+      - POLICIES_HOST_DIR=${POLICIES_HOST_DIR:-}
+      - POLICIES_VOLUME=${POLICIES_VOLUME:-cm-policies}
+      - POLICIES_DIR=/app/policies
+      - PROXY_URL=http://cm-proxy:3128
+      - PROXY_ACL_DIR=/proxy-acl
+      - LITELLM_API_BASE=http://cm-litellm:4000
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-}
+      - LITELLM_KEY_LOCAL_LLM=${LITELLM_KEY_LOCAL_LLM:-}
+      - LITELLM_KEY_FOUNDRY=${LITELLM_KEY_FOUNDRY:-}
+      - LITELLM_KEY_FOUNDRY_LATEST=${LITELLM_KEY_FOUNDRY_LATEST:-}
+      - LITELLM_DEFAULT_BUDGET=${LITELLM_DEFAULT_BUDGET:-20}
     networks:
       - claude-manager-net
+
+  cm-proxy:
+    build: ./proxy
+    container_name: cm-proxy
+    restart: unless-stopped
+    volumes:
+      - proxy-acl:/etc/squid/acl
+    networks:
+      - claude-manager-net
+
+  cm-litellm:
+    build: ./litellm
+    container_name: cm-litellm
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-litellm}@cm-litellm-db:5432/${POSTGRES_DB:-litellm}
+      - AZURE_AI_API_KEY=${AZURE_AI_API_KEY:-}
+      - AZURE_AI_API_BASE=${AZURE_AI_API_BASE:-}
+      - GPTLATEST_AZURE_AI_API_KEY=${GPTLATEST_AZURE_AI_API_KEY:-}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on:
+      cm-litellm-db:
+        condition: service_healthy
+    networks:
+      - claude-manager-net
+
+  cm-ollama:
+    image: ollama/ollama
+    container_name: cm-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_FLASH_ATTENTION=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - claude-manager-net
+
+  cm-litellm-db:
+    image: postgres:16-alpine
+    container_name: cm-litellm-db
+    restart: unless-stopped
+    volumes:
+      - litellm-db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-litellm}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-litellm}
+      - POSTGRES_DB=${POSTGRES_DB:-litellm}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - claude-manager-net
+
+  test:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspace:/app/workspace:ro
+    environment:
+      - TEST_API_BASE=http://claude-manager:3002
+    networks:
+      - claude-manager-net
+    profiles:
+      - test
 
   claude-workspace:
     build: ./workspace
@@ -36,3 +132,6 @@ networks:
 
 volumes:
   claude-manager-data:
+  proxy-acl:
+  ollama-data:
+  litellm-db:

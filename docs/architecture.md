@@ -1,4 +1,4 @@
-# Claude Manager v2 — Architecture
+# Claude Manager — Architecture
 
 A self-hosted web UI that runs as a Docker container and manages sibling
 Claude Code workspace containers on the same host, with per-container
@@ -6,9 +6,6 @@ Claude Code workspace containers on the same host, with per-container
 instance. For the design intent and current status, see
 [brief.md](../brief.md); for day-to-day usage, see
 [operations.md](operations.md).
-
-> **v2 is the active version** (port 3002, `docker-compose.v2.yml`). v1
-> still ships in the repo on port 3000 as legacy and is not covered here.
 
 All diagrams below are generated from text sources in `docs/diagrams/`.
 Edit the source, re-render, commit both. The render commands live in
@@ -24,7 +21,7 @@ Six containers, one bridge network (`claude-manager-net`):
 
 | Container             | Image source           | Purpose                                                       |
 |-----------------------|------------------------|---------------------------------------------------------------|
-| `claude-manager-v2`   | `v2/Dockerfile`        | Fastify 5 backend + React 19 frontend, manages Docker via socket |
+| `claude-manager`   | `Dockerfile`        | Fastify 5 backend + React 19 frontend, manages Docker via socket |
 | `cm-proxy`            | `proxy/Dockerfile`     | squid forward proxy — enforces per-container network ACLs     |
 | `cm-litellm`          | `litellm/Dockerfile`   | LiteLLM proxy — routes Claude Code requests to Ollama / Azure |
 | `cm-ollama`           | `ollama/ollama` (NVIDIA) | Local inference — Qwen3 30B-A3B on the host GPU             |
@@ -55,7 +52,7 @@ claude-manager/
 ├── workspace/
 │   └── policies/               network policies — bind-mounted into manager as /policies (RO)
 ├── proxy-acl (Docker volume)   manager writes, cm-proxy reads (inotify reload)
-└── claude-manager-v2-data (Docker volume)   /data/manager.db (+ /data/backups/)
+└── claude-manager-data (Docker volume)   /data/manager.db (+ /data/backups/)
 ```
 
 **Isolation model:**
@@ -67,7 +64,7 @@ claude-manager/
   instructions) and `/shared` (utility files).
 
 Push `data/` to GitHub, clone on a new host, `docker compose -f
-docker-compose.v2.yml up` — settings and memory are restored. Each
+docker-compose.yml up` — settings and memory are restored. Each
 instance re-authenticates (`claude login` for `claude-max`, `gh auth
 login`) on first use.
 
@@ -120,7 +117,7 @@ cm-access --request --hosts "api.example.com,cdn.example.com" --reason "Fetch da
 cm-access --poll                              # wait until admin resolves
 ```
 
-Server-side (`v2/server/routes/access-requests.js`):
+Server-side (`server/routes/access-requests.js`):
 
 - The request goes into the `access_requests` SQLite table, status
   `pending`, and is broadcast over WebSocket to connected admin
@@ -175,7 +172,7 @@ admin API.
 
 ## 5. Capability grants
 
-High-risk capabilities are **time-bound** (`v2/server/grants.js`,
+High-risk capabilities are **time-bound** (`server/grants.js`,
 table `capability_grants`):
 
 | Capability             | Default TTL | What it covers                                        |
@@ -206,8 +203,8 @@ helper (also exposed in the UI).
 
 ![Request flow](diagrams/request-flow.png)
 
-In code (`v2/server/routes/instances.js` → `createInstance` →
-`v2/server/docker.js`):
+In code (`server/routes/instances.js` → `createInstance` →
+`server/docker.js`):
 
 1. Validate body against the schema (`networkPolicy` ∈ `NETWORK_POLICIES`,
    `llmBackend` ∈ `LLM_BACKENDS`).
@@ -302,7 +299,7 @@ Device auth gates `/api/*` only — static frontend assets, the
 4. Forwards `{"type":"resize","cols":N,"rows":N}` control messages to
    `exec.resize`.
 5. On socket close, sends `Ctrl-a d` (the workspace `tmux.conf`
-   remaps the prefix; v1 used `Ctrl-b`) so the session lives on.
+   remaps the prefix to `Ctrl-a`) so the session lives on.
 
 State machine:
 
@@ -313,7 +310,7 @@ State machine:
 ## 7. Backend layout
 
 ```
-v2/server/
+server/
 ├── index.js                 Fastify bootstrap, plugin & route registration, grant timer, ACL sync
 ├── config.js                Env-var loading
 ├── auth.js                  hashToken(), registerAuthHooks() (gate /api except /api/auth + a few in-container)
@@ -345,7 +342,7 @@ decorates `request.device` so admin endpoints can check
 ## 8. Frontend layout
 
 ```
-v2/src/
+src/
 ├── main.jsx                  React entry
 ├── App.jsx                   Auth gate → Dashboard / WaitingApproval
 ├── api.js                    fetch wrapper (credentials: 'include')
@@ -423,7 +420,7 @@ running container and replays any approved access-request hosts.
 | Container name    | `cm-instance-{slug}-{id}`            | `cm-instance-customer-a-a1b2c3d4`    |
 | Volume name       | `cm-workspace-{slug}-{id}`           | `cm-workspace-customer-a-a1b2c3d4`   |
 | Network           | `claude-manager-net`                 | `claude-manager-net`                 |
-| Manager container | `claude-manager-v2`                  | `claude-manager-v2`                  |
+| Manager container | `claude-manager`                  | `claude-manager`                  |
 | Memory dir        | `data/instance-memory/{slug}/`       | `data/instance-memory/customer-a/`   |
 | ACL file          | `/proxy-acl/{safe-id}.acl`           | `/proxy-acl/a1b2c3d4.acl`            |
 
@@ -550,8 +547,8 @@ for the `foundry` / `foundry-latest` backends — see
 ## 12. Build + deploy
 
 ```bash
-docker compose -f docker-compose.v2.yml --profile build-only build
-docker compose -f docker-compose.v2.yml up -d
+docker compose -f docker-compose.yml --profile build-only build
+docker compose -f docker-compose.yml up -d
 ```
 
 The `build-only` profile builds the workspace image alongside the
@@ -568,16 +565,14 @@ claude-manager/
 ├── brief.md                    project self-summary (start here)
 ├── CLAUDE.md                   project-level context for Claude Code
 ├── README.md
-├── docker-compose.v2.yml       v2 stack (active)
-├── docker-compose.yml          v1 stack (legacy)
-├── v2/                         active manager backend + frontend
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── server/                 (see §7)
-│   ├── src/                    (see §8)
-│   ├── shared/constants.js
-│   ├── policies/               policy YAML — same content as workspace/policies/
-│   └── tests/                  10 v2 integration tests
+├── docker-compose.yml          full stack (6 services)
+├── Dockerfile                  manager image (multi-stage)
+├── package.json
+├── server/                     Fastify backend (see §7)
+├── src/                        React frontend (see §8)
+├── shared/constants.js
+├── policies/                   network policy YAML
+├── tests/                      10 integration tests
 ├── proxy/                      cm-proxy image (squid + watch-acls)
 ├── litellm/                    cm-litellm image (LiteLLM + config.yaml)
 ├── workspace/                  claude-workspace image source
@@ -587,19 +582,15 @@ claude-manager/
 │   └── scripts/
 │       ├── entrypoint.sh       iptables lock when restricted
 │       ├── cm-access           network access CLI for agents
-│       ├── init-firewall.sh
 │       └── proxy-bootstrap.js  Node.js https-proxy-agent shim
 ├── data/                       runtime config + memory (git-tracked)
 │   ├── shared/
 │   ├── claude-home/            includes global CLAUDE.md with cm-access workflow
 │   └── instance-memory/
-├── scripts/dev.sh
-├── server/ · src/ · workspace/ shared by v1 (legacy)
 └── docs/
     ├── architecture.md         (this file)
     ├── deployment.md
     ├── operations.md
     ├── roadmap.md
     └── diagrams/               .dot · .puml · .mmd · .py · .md sources + PNGs
-        └── archive/            old .drawio (reference)
 ```

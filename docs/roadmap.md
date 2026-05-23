@@ -2,13 +2,13 @@
 
 > **Status as of 2026-05-22** — Phase 1 (MVP), much of Phase 2
 > (observability), and the network-policy work originally planned as
-> Phase 3.5 are all shipped in v2 (port 3002, `docker-compose.v2.yml`).
+> Phase 3.5 are all shipped (port 3002, `docker-compose.yml`).
 > Implementation differs slightly from what's described below — the
 > design notes are kept for context, but see
 > [architecture.md](architecture.md) and [brief.md](../brief.md) for
 > what actually ships.
 
-## Shipped in v2 (May 2026)
+## Shipped (May 2026)
 
 - **Per-container network policy enforcement** — squid forward proxy
   (`cm-proxy`) with per-container ACL files, plus an in-container
@@ -209,10 +209,10 @@ Features:
 
 ---
 
-## Phase 3.5 -- Instance Network Policy (SHIPPED — see "Shipped in v2" above)
+## Phase 3.5 -- Instance Network Policy (SHIPPED — see "Shipped" above)
 
 > The notes below describe the original NemoClaw-inspired design.
-> Implementation in v2 differs in two important ways: enforcement is
+> Implementation differs in two important ways: enforcement is
 > done with a squid forward proxy (domain-level filtering, no IP
 > games) plus an in-container iptables lock, rather than only
 > iptables; and policies are YAML files in `workspace/policies/`

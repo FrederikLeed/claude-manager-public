@@ -2,6 +2,5 @@ name: claude-only
 description: Anthropic API only — for customer-data work where the agent must not reach anywhere else
 allowed_hosts:
   - api.anthropic.com
-  - platform.claude.com
   - statsig.anthropic.com
   - sentry.io

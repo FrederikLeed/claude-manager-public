@@ -2,7 +2,12 @@ import crypto from 'crypto';
 import { getDeviceByTokenHash } from './db.js';
 
 const COOKIE_NAME = 'cm_device_token';
-const AUTH_EXEMPT = ['/api/auth/register', '/api/auth/status'];
+const AUTH_EXEMPT = ['/api/auth/register', '/api/auth/status', '/api/policies'];
+// Patterns exempt from auth — called from inside containers
+const AUTH_EXEMPT_PATTERNS = [
+  /^\/api\/instances\/[^/]+\/request-access$/,
+  /^\/api\/instances\/[^/]+\/access$/,
+];
 
 export function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -16,6 +21,7 @@ export function registerAuthHooks(fastify) {
     // Skip auth endpoints
     const urlPath = request.url.split('?')[0];
     if (AUTH_EXEMPT.includes(urlPath)) return;
+    if (AUTH_EXEMPT_PATTERNS.some(p => p.test(urlPath))) return;
 
     const token = request.cookies?.[COOKIE_NAME];
     if (!token) {

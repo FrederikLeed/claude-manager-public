@@ -1,11 +1,35 @@
 import Docker from 'dockerode';
 import crypto from 'crypto';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync } from 'fs';
+import path from 'path';
 import { config } from './config.js';
 import { getAllInstances } from './db.js';
-import { LABELS, CONTAINER_PREFIX, VOLUME_PREFIX } from '../shared/constants.js';
+import { LABELS, CONTAINER_PREFIX, VOLUME_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+
+// Cache for resolved host paths from manager's own mounts
+let _selfMounts = null;
+
+/**
+ * Resolve a container-internal path to its host source path
+ * by inspecting the manager's own bind mounts.
+ * e.g. /claude-home → /host/path/to/data/claude-home
+ */
+async function resolveHostPath(containerPath) {
+  if (!_selfMounts) {
+    try {
+      const hostname = (await import('os')).hostname();
+      const container = docker.getContainer(hostname);
+      const inspect = await container.inspect();
+      _selfMounts = (inspect.Mounts || []).filter(m => m.Type === 'bind');
+    } catch {
+      _selfMounts = [];
+    }
+  }
+  const mount = _selfMounts.find(m => m.Destination === containerPath);
+  return mount?.Source || null;
+}
 
 // Cached bind mount template learned from existing containers
 let _mountTemplate = null;
@@ -204,7 +228,7 @@ export async function getContainer(id) {
 /**
  * Create a new managed container instance.
  */
-export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false }) {
+export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max' }) {
   const id = crypto.randomUUID().slice(0, 8);
   const slug = name
     ? name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
@@ -289,7 +313,13 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   // Add explicit config-based mounts (override learned ones)
   if (config.INSTANCE_SHARED_DIR) binds.push(`${config.INSTANCE_SHARED_DIR}:/shared`);
   if (config.INSTANCE_MEMORY_DIR) binds.push(`${config.INSTANCE_MEMORY_DIR}:/project-memory`);
-  if (config.INSTANCE_CLAUDE_DIR) binds.push(`${config.INSTANCE_CLAUDE_DIR}:/home/claude/.claude`);
+  if (config.INSTANCE_CLAUDE_DIR) {
+    binds.push(`${config.INSTANCE_CLAUDE_DIR}:/home/claude/.claude`);
+  } else if (!binds.some(b => b.includes('/home/claude/.claude'))) {
+    // Auto-resolve from manager's own /claude-home mount
+    const claudeHomeHost = await resolveHostPath('/claude-home');
+    if (claudeHomeHost) binds.push(`${claudeHomeHost}:/home/claude/.claude`);
+  }
 
   // Per-instance project memory: <base>/<slug>/ → /workspace/.claude
   if (config.INSTANCE_MEMORY_BASE_DIR) {
@@ -309,29 +339,76 @@ export async function createInstance({ name, image, env = [], autoStart = false,
 
   console.log(`[create-instance] "${containerName}" binds: ${binds.join(', ')}`);
 
+  // Build environment variables
+  const proxyUrl = config.PROXY_URL || 'http://cm-proxy:3128';
+  const containerEnv = [
+    `PROJECT_NAME=${name || 'unnamed'}`,
+    `PROJECT_SLUG=${slug}`,
+    `CM_INSTANCE_ID=${id}`,
+    `CM_MANAGER_URL=http://claude-manager:3002`,
+    `CM_NETWORK_POLICY=${networkPolicy || 'unrestricted'}`,
+    ...env,
+  ];
+
+  // Set proxy env vars for non-unrestricted policies
+  if (networkPolicy && networkPolicy !== 'unrestricted') {
+    containerEnv.push(
+      `HTTP_PROXY=${proxyUrl}`,
+      `HTTPS_PROXY=${proxyUrl}`,
+      `http_proxy=${proxyUrl}`,
+      `https_proxy=${proxyUrl}`,
+      // Don't proxy internal Docker network traffic
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+    );
+  }
+
+  // LLM backend: route Claude Code through LiteLLM for local/foundry backends
+  if (config.LITELLM_API_BASE) {
+    containerEnv.push(`LITELLM_API_BASE=${config.LITELLM_API_BASE}`);
+  }
+  if (llmBackend && llmBackend !== 'claude-max' && config.LITELLM_API_BASE) {
+    containerEnv.push(`ANTHROPIC_BASE_URL=${config.LITELLM_API_BASE}`);
+    // Use per-backend scoped virtual key for correct model routing
+    const backendKeys = {
+      'local-llm': process.env.LITELLM_KEY_LOCAL_LLM,
+      'foundry': process.env.LITELLM_KEY_FOUNDRY,
+      'foundry-latest': process.env.LITELLM_KEY_FOUNDRY_LATEST,
+    };
+    const apiKey = backendKeys[llmBackend] || config.LITELLM_MASTER_KEY;
+    if (apiKey) {
+      containerEnv.push(`ANTHROPIC_API_KEY=${apiKey}`);
+    }
+  }
+
   // Create the container
   let container;
   try {
+    const hostConfig = {
+      Binds: binds,
+      NetworkMode: config.CLAUDE_NETWORK,
+      RestartPolicy: { Name: 'unless-stopped' },
+    };
+
+    // NET_ADMIN needed for iptables lock (prevents proxy bypass)
+    if (networkPolicy && networkPolicy !== 'unrestricted') {
+      hostConfig.CapAdd = ['NET_ADMIN'];
+    }
+
     container = await docker.createContainer({
       name: containerName,
       Image: imageName,
-      Env: [
-        `PROJECT_NAME=${name || 'unnamed'}`,
-        `PROJECT_SLUG=${slug}`,
-        ...env,
-      ],
+      Env: containerEnv,
       Labels: {
         [LABELS.MANAGED]: 'true',
         [LABELS.ID]: id,
         [LABELS.NAME]: name,
+        [LABELS.NETWORK_POLICY]: networkPolicy || 'unrestricted',
+        [LABELS.LLM_BACKEND]: llmBackend || 'claude-max',
       },
       Tty: true,
       OpenStdin: true,
-      HostConfig: {
-        Binds: binds,
-        NetworkMode: config.CLAUDE_NETWORK,
-        RestartPolicy: { Name: 'unless-stopped' },
-      },
+      HostConfig: hostConfig,
     });
   } catch (err) {
     const error = new Error(`Failed to create container: ${err.message}`);
@@ -419,9 +496,19 @@ export async function execInContainer(id, cmd) {
 
   const stream = await exec.start({ Tty: false });
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    stream.on('data', (chunk) => chunks.push(chunk));
-    stream.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    const stdout = [];
+    const stderr = [];
+    // Demux the Docker multiplexed stream (8-byte header per frame)
+    docker.modem.demuxStream(stream, {
+      write: (chunk) => stdout.push(chunk),
+    }, {
+      write: (chunk) => stderr.push(chunk),
+    });
+    stream.on('end', () => {
+      const out = Buffer.concat(stdout).toString();
+      const err = Buffer.concat(stderr).toString();
+      resolve(out || err);
+    });
     stream.on('error', reject);
   });
 }
@@ -585,7 +672,7 @@ export async function adoptContainer(dockerId, { name }) {
  * Preserves: image, env, labels, mounts, network, restart policy.
  * Returns the new container info.
  */
-export async function recreateInstance(id, { dockerSocket }) {
+export async function recreateInstance(id, { dockerSocket, networkPolicy } = {}) {
   const container = await resolveContainer(id);
   const inspect = await container.inspect();
 
@@ -593,15 +680,39 @@ export async function recreateInstance(id, { dockerSocket }) {
   const oldName = inspect.Name?.replace('/', '');
   const oldConfig = inspect.Config || {};
   const oldHostConfig = inspect.HostConfig || {};
+  const oldLabels = oldConfig.Labels || {};
 
-  // Build new bind list: keep existing binds, add/remove docker socket
+  // Resolve current values — use new if provided, else keep old
+  const newDockerSocket = dockerSocket ?? hasDockerSocket(inspect.Mounts);
+  const newNetworkPolicy = networkPolicy ?? (oldLabels[LABELS.NETWORK_POLICY] || 'unrestricted');
+
+  // Build new bind list: keep existing binds, remove docker socket
   const existingBinds = (oldHostConfig.Binds || []).filter(
     (b) => !b.includes('docker.sock')
   );
   const newBinds = [...existingBinds];
-  if (dockerSocket) {
+  if (newDockerSocket) {
     newBinds.push('/var/run/docker.sock:/var/run/docker.sock');
   }
+
+  // Update env vars: remove old proxy/policy vars, add new ones
+  const proxyUrl = config.PROXY_URL || 'http://cm-proxy:3128';
+  const proxyVarPrefixes = ['HTTP_PROXY=', 'HTTPS_PROXY=', 'http_proxy=', 'https_proxy=',
+    'NO_PROXY=', 'no_proxy=', 'GLOBAL_AGENT_', 'NETWORK_POLICY=', 'CM_NETWORK_POLICY='];
+  const newEnv = (oldConfig.Env || []).filter((e) => !proxyVarPrefixes.some(p => e.startsWith(p)));
+  newEnv.push(`CM_NETWORK_POLICY=${newNetworkPolicy}`);
+
+  if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
+    newEnv.push(
+      `HTTP_PROXY=${proxyUrl}`, `HTTPS_PROXY=${proxyUrl}`,
+      `http_proxy=${proxyUrl}`, `https_proxy=${proxyUrl}`,
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+    );
+  }
+
+  // Update labels
+  const newLabels = { ...oldLabels, [LABELS.NETWORK_POLICY]: newNetworkPolicy };
 
   // Stop and remove old container
   if (wasRunning) {
@@ -612,18 +723,25 @@ export async function recreateInstance(id, { dockerSocket }) {
   await container.remove({ force: true });
 
   // Create replacement container with same config
+  const hostConfig = {
+    Binds: newBinds,
+    NetworkMode: oldHostConfig.NetworkMode || config.CLAUDE_NETWORK,
+    RestartPolicy: oldHostConfig.RestartPolicy || { Name: 'unless-stopped' },
+  };
+
+  // NET_ADMIN needed for iptables lock (prevents proxy bypass)
+  if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
+    hostConfig.CapAdd = ['NET_ADMIN'];
+  }
+
   const newContainer = await docker.createContainer({
     name: oldName,
     Image: oldConfig.Image,
-    Env: oldConfig.Env || [],
-    Labels: oldConfig.Labels || {},
+    Env: newEnv,
+    Labels: newLabels,
     Tty: oldConfig.Tty ?? true,
     OpenStdin: oldConfig.OpenStdin ?? true,
-    HostConfig: {
-      Binds: newBinds,
-      NetworkMode: oldHostConfig.NetworkMode || config.CLAUDE_NETWORK,
-      RestartPolicy: oldHostConfig.RestartPolicy || { Name: 'unless-stopped' },
-    },
+    HostConfig: hostConfig,
   });
 
   // Restart if it was running before
@@ -729,6 +847,8 @@ function formatContainerInfo(container) {
     created: container.Created,
     ports: container.Ports || [],
     dockerSocket: hasDockerSocket(container.Mounts),
+    networkPolicy: labels[LABELS.NETWORK_POLICY] || 'unrestricted',
+    llmBackend: labels[LABELS.LLM_BACKEND] || 'claude-max',
   };
 }
 
@@ -750,7 +870,48 @@ function formatInspectInfo(inspect) {
     mounts: inspect.Mounts || [],
     networkSettings: inspect.NetworkSettings || {},
     dockerSocket: hasDockerSocket(inspect.Mounts),
+    networkPolicy: labels[LABELS.NETWORK_POLICY] || 'unrestricted',
+    llmBackend: labels[LABELS.LLM_BACKEND] || 'claude-max',
   };
+}
+
+/**
+ * List available network policies from the policies directory.
+ */
+export function listPolicies() {
+  const policiesDir = config.POLICIES_DIR;
+  try {
+    const files = readdirSync(policiesDir).filter(f => f.endsWith('.yaml'));
+    return files.map(f => {
+      const content = readFileSync(path.join(policiesDir, f), 'utf8');
+      const nameMatch = content.match(/^name:\s*(.+)$/m);
+      const descMatch = content.match(/^description:\s*(.+)$/m);
+      const isUnrestricted = /^unrestricted:\s*true$/m.test(content);
+
+      // Extract allowed hosts
+      const hosts = [];
+      let inHosts = false;
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === 'allowed_hosts:') { inHosts = true; continue; }
+        if (inHosts) {
+          if (!trimmed.startsWith('-')) { inHosts = false; continue; }
+          const host = trimmed.replace(/^-\s*/, '');
+          if (host && !host.startsWith('#')) hosts.push(host);
+        }
+      }
+
+      return {
+        id: f.replace('.yaml', ''),
+        name: nameMatch?.[1] || f.replace('.yaml', ''),
+        description: descMatch?.[1] || '',
+        unrestricted: isUnrestricted,
+        allowedHosts: hosts,
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 function formatUptime(startedAt) {

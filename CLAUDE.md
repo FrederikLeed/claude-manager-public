@@ -27,7 +27,7 @@ Includes the workspace Docker image source in workspace/.
 - xterm.js for terminal emulation
 
 ## Development
-npm run dev    # starts both Vite dev server (5173) and Fastify (3001) concurrently
+npm run dev    # starts both Vite dev server (5173) and Fastify (3002) concurrently
 npm run build  # builds frontend into dist/, then Fastify serves it
 
 ## Docker context

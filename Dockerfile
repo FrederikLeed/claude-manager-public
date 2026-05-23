@@ -21,11 +21,13 @@ RUN npm ci --omit=dev && apk del .build-deps
 COPY server/ ./server/
 COPY shared/ ./shared/
 COPY --from=frontend /app/dist ./dist/
+COPY policies/ ./policies/
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV POLICIES_DIR=/app/policies
+ENV PORT=3002
 ENV DATA_DIR=/data
 
-EXPOSE 3000
+EXPOSE 3002
 
 CMD ["node", "server/index.js"]

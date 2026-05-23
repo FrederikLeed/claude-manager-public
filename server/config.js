@@ -1,6 +1,6 @@
 export const config = Object.freeze({
-  PORT: parseInt(process.env.PORT || '3000', 10),
-  DEV_PORT: parseInt(process.env.DEV_PORT || '3001', 10),
+  PORT: parseInt(process.env.PORT || '3002', 10),
+  DEV_PORT: parseInt(process.env.DEV_PORT || '3002', 10),
   DATA_DIR: process.env.DATA_DIR || '/data',
   CLAUDE_IMAGE: process.env.CLAUDE_IMAGE || 'claude-workspace:latest',
   CLAUDE_NETWORK: process.env.CLAUDE_NETWORK || 'claude-manager-net',
@@ -19,4 +19,19 @@ export const config = Object.freeze({
   // Emergency admin reset token — pass as query param ?reset_token=XXX on /api/auth/register
   // to force-register as admin even when devices already exist. Leave empty to disable.
   ADMIN_RESET_TOKEN: process.env.ADMIN_RESET_TOKEN || '',
+  // Network policy defaults
+  DEFAULT_NETWORK_POLICY: process.env.DEFAULT_NETWORK_POLICY || 'unrestricted',
+  // Host path to workspace/policies/ directory (for bind-mounting into workspace containers)
+  POLICIES_HOST_DIR: process.env.POLICIES_HOST_DIR || '',
+  // Docker volume name for policies (alternative to POLICIES_HOST_DIR for DinD setups)
+  POLICIES_VOLUME: process.env.POLICIES_VOLUME || '',
+  // Container-local path where policies are mounted in the manager container
+  POLICIES_DIR: process.env.POLICIES_DIR || '/policies',
+  // Network proxy (squid)
+  PROXY_URL: process.env.PROXY_URL || 'http://cm-proxy:3128',
+  PROXY_ACL_DIR: process.env.PROXY_ACL_DIR || '/proxy-acl',
+  // LiteLLM proxy
+  LITELLM_API_BASE: process.env.LITELLM_API_BASE || '',
+  LITELLM_MASTER_KEY: process.env.LITELLM_MASTER_KEY || '',
+  LITELLM_DEFAULT_BUDGET: parseFloat(process.env.LITELLM_DEFAULT_BUDGET || '20'),
 });

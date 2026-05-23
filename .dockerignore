@@ -1,9 +1,17 @@
-node_modules
-dist
 .git
 .env
+node_modules
+dist
 *.db
 *.db-journal
 *.db-wal
 *.md
 !CLAUDE.md
+
+# Not part of manager image
+workspace/
+proxy/
+litellm/
+docs/
+data/
+tests/

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import StatusBadge from './StatusBadge.jsx';
+import GrantBadge from './GrantBadge.jsx';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -18,7 +19,7 @@ const borderColors = {
   dead: 'border-l-red-700',
 };
 
-export default function InstanceCard({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting }) {
+export default function InstanceCard({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting, onPolicyClick, onGrantClick }) {
   const [stopping, setStopping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [recreating, setRecreating] = useState(false);
@@ -50,26 +51,48 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {managed && (
-            <button
-              onClick={async () => {
-                const next = !instance.dockerSocket;
-                const msg = next
-                  ? 'Enable Docker socket? Container will be recreated.'
-                  : 'Disable Docker socket? Container will be recreated.';
-                if (!window.confirm(msg)) return;
-                setRecreating(true);
-                try { await onRecreate(instance.id, { dockerSocket: next }); } finally { setRecreating(false); }
-              }}
-              disabled={busy}
-              className={`text-[10px] border rounded px-1 py-0.5 transition-colors ${
-                instance.dockerSocket
-                  ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
-                  : 'text-gray-600 border-gray-700 hover:text-gray-400 hover:border-gray-600'
-              }`}
-              title={instance.dockerSocket ? 'Docker socket enabled — click to disable (recreates container)' : 'Docker socket disabled — click to enable (recreates container)'}
-            >
-              {recreating ? '...' : 'Docker'}
-            </button>
+            <>
+              <button
+                onClick={async () => {
+                  const next = !instance.dockerSocket;
+                  const msg = next
+                    ? 'Enable Docker socket? Container will be recreated.'
+                    : 'Disable Docker socket? Container will be recreated.';
+                  if (!window.confirm(msg)) return;
+                  setRecreating(true);
+                  try { await onRecreate(instance.id, { dockerSocket: next }); } finally { setRecreating(false); }
+                }}
+                disabled={busy}
+                className={`text-[10px] border rounded px-1 py-0.5 transition-colors ${
+                  instance.dockerSocket
+                    ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
+                    : 'text-gray-600 border-gray-700 hover:text-gray-400 hover:border-gray-600'
+                }`}
+                title={instance.dockerSocket ? 'Docker socket enabled — click to disable (recreates container)' : 'Docker socket disabled — click to enable (recreates container)'}
+              >
+                {recreating ? '...' : 'Docker'}
+              </button>
+              {instance.networkPolicy && (
+                <button
+                  onClick={() => onPolicyClick?.({ policy: instance.networkPolicy, instanceId: instance.id })}
+                  className={`text-[10px] border rounded px-1 py-0.5 transition-colors ${
+                    instance.networkPolicy === 'unrestricted'
+                      ? 'text-yellow-500 border-yellow-800 hover:bg-yellow-900/30'
+                      : 'text-blue-400 border-blue-800 hover:bg-blue-900/30'
+                  }`}
+                  title={`Network access: ${instance.networkPolicy} — click for details`}
+                >
+                  {instance.networkPolicy}{instance.hasCustomHosts ? '++' : ''}
+                </button>
+              )}
+              {instance.grants?.filter((g) => g.active).map((grant) => (
+                <GrantBadge
+                  key={grant.id}
+                  grant={grant}
+                  onClick={() => onGrantClick?.(instance.id)}
+                />
+              ))}
+            </>
           )}
           {!managed && (
             <span className="text-[10px] text-gray-500 border border-gray-700 rounded px-1.5 py-0.5">Unmanaged</span>

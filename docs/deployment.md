@@ -1,14 +1,11 @@
-# Claude Manager v2 — Deployment Guide
+# Claude Manager — Deployment Guide
 
-This guide covers deploying **Claude Manager v2** — a six-container
+This guide covers deploying **Claude Manager** — a six-container
 stack consisting of the manager UI, a squid forward proxy, a LiteLLM
 router, an Ollama runtime, a Postgres state DB for LiteLLM, and any
 number of managed workspace instances. The manager runs as a container
 and manages sibling workspace containers on the same host via the
 Docker socket.
-
-> v1 still lives in the repo (port 3000, `docker-compose.yml`) for
-> backwards compatibility. This guide is for v2 only.
 
 ---
 
@@ -31,7 +28,7 @@ docker version
 
 The `API version` line must be `1.41` or higher.
 
-### Docker Compose v2
+### Docker Compose
 
 Use the `docker compose` plugin, not the legacy `docker-compose` binary.
 
@@ -41,7 +38,7 @@ docker compose version
 
 ### NVIDIA GPU + Container Toolkit (for `cm-ollama`)
 
-`cm-ollama` runs Qwen3 30B-A3B locally. The `docker-compose.v2.yml`
+`cm-ollama` runs Qwen3 30B-A3B locally. The `docker-compose.yml`
 declares an NVIDIA GPU reservation for the `cm-ollama` service:
 
 ```yaml
@@ -63,7 +60,7 @@ docker info | grep -i nvidia   # nvidia runtime registered?
 ```
 
 Without a GPU you have three options:
-1. Drop the `cm-ollama` service from `docker-compose.v2.yml` and skip
+1. Drop the `cm-ollama` service from `docker-compose.yml` and skip
    the `local-llm` backend — instances default to `claude-max`.
 2. Run Ollama externally and point LiteLLM at it
    (`litellm/config.yaml`).
@@ -83,14 +80,14 @@ Without a GPU you have three options:
 
 | Component                      | RAM    | Notes                                       |
 |--------------------------------|--------|---------------------------------------------|
-| `claude-manager-v2`            | ~1 GB  | Node.js + SQLite + frontend assets          |
+| `claude-manager`            | ~1 GB  | Node.js + SQLite + frontend assets          |
 | `cm-proxy`                     | ~50 MB | squid is tiny                               |
 | `cm-litellm`                   | ~512 MB| Python proxy                                |
 | `cm-litellm-db`                | ~256 MB| Idle PostgreSQL                             |
 | `cm-ollama` (Qwen3 30B-A3B)    | 24 GB VRAM + 4 GB RAM | RTX 3090+ class GPU (≥24 GB VRAM) |
 | Each workspace instance        | ~2 GB  | Depends on workload                         |
 
-A host with 32 GB RAM + an NVIDIA GPU (≥24 GB VRAM) comfortably runs the full v2 stack
+A host with 32 GB RAM + an NVIDIA GPU (≥24 GB VRAM) comfortably runs the full stack
 plus 5-7 concurrent workspace instances.
 
 ### Network
@@ -121,13 +118,13 @@ cp .env.example .env
 # INSTANCE_MEMORY_BASE_DIR to ABSOLUTE host paths
 
 # 2. Build all images (manager, workspace, proxy, litellm)
-docker compose -f docker-compose.v2.yml --profile build-only build
+docker compose -f docker-compose.yml --profile build-only build
 
 # 3. Start the stack
-docker compose -f docker-compose.v2.yml up -d
+docker compose -f docker-compose.yml up -d
 
 # 4. Verify
-docker compose -f docker-compose.v2.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 Open **http://localhost:3002**. The first browser to load it is
@@ -211,12 +208,12 @@ Docker Compose auto-loads `.env`.
 
 ### Volume mounts
 
-The manager (`claude-manager-v2`) requires:
+The manager (`claude-manager`) requires:
 
 ```yaml
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock     # required — Docker API
-  - claude-manager-v2-data:/data                  # SQLite + backups
+  - claude-manager-data:/data                  # SQLite + backups
   - ${SHARED_DIR:-./data/shared}:/shared          # manager's /shared view
   - ${INSTANCE_MEMORY_BASE_DIR:-./data/instance-memory}:/instance-memory
   - ${CLAUDE_HOME_DIR:-./data/claude-home}:/claude-home
@@ -247,7 +244,7 @@ All services use `restart: unless-stopped`. After host reboots the
 stack comes back automatically. To stop the whole stack:
 
 ```bash
-docker compose -f docker-compose.v2.yml stop
+docker compose -f docker-compose.yml stop
 ```
 
 ---
@@ -294,7 +291,7 @@ server {
 
 ```yaml
 services:
-  claude-manager-v2:
+  claude-manager:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.claude-manager.rule=Host(`claude.example.com`)"
@@ -322,8 +319,8 @@ Traefik passes WebSocket upgrades automatically.
 ```bash
 cd claude-manager
 git pull
-docker compose -f docker-compose.v2.yml --profile build-only build
-docker compose -f docker-compose.v2.yml up -d
+docker compose -f docker-compose.yml --profile build-only build
+docker compose -f docker-compose.yml up -d
 ```
 
 Database migrations run automatically — `CREATE TABLE IF NOT EXISTS` +
@@ -338,7 +335,7 @@ etc.) on startup.
 
 | Class                          | Where                                                | Backup story                          |
 |--------------------------------|------------------------------------------------------|---------------------------------------|
-| Manager DB                     | Docker volume `claude-manager-v2-data` → `/data/manager.db` | Auto-snapshot to `/data/backups/` on every startup (last 3 kept) |
+| Manager DB                     | Docker volume `claude-manager-data` → `/data/manager.db` | Auto-snapshot to `/data/backups/` on every startup (last 3 kept) |
 | Per-instance code & files       | Docker volume `cm-workspace-{slug}-{id}` (`/workspace`) | `docker volume` — not auto-backed-up |
 | Per-instance project memory    | `data/instance-memory/<slug>/` on host               | **`git push`**                        |
 | Global Claude config + memory   | `data/claude-home/` on host (auth files gitignored)  | **`git push`**                        |
@@ -353,17 +350,17 @@ The startup snapshot is the easy story. For an on-demand backup:
 
 ```bash
 # Option A — stop and copy (safest)
-docker compose -f docker-compose.v2.yml stop claude-manager-v2
-cp "$(docker volume inspect claude-manager-v2-data --format '{{.Mountpoint}}')/manager.db" \
-   ~/backups/claude-manager-v2-$(date +%Y%m%d).db
-docker compose -f docker-compose.v2.yml start claude-manager-v2
+docker compose -f docker-compose.yml stop claude-manager
+cp "$(docker volume inspect claude-manager-data --format '{{.Mountpoint}}')/manager.db" \
+   ~/backups/claude-manager-$(date +%Y%m%d).db
+docker compose -f docker-compose.yml start claude-manager
 
 # Option B — online (.backup, WAL-safe)
-docker exec claude-manager-v2 sh -c \
+docker exec claude-manager sh -c \
   "sqlite3 /data/manager.db '.backup /data/manager-backup.db'"
-docker cp claude-manager-v2:/data/manager-backup.db \
-  ~/backups/claude-manager-v2-$(date +%Y%m%d).db
-docker exec claude-manager-v2 rm /data/manager-backup.db
+docker cp claude-manager:/data/manager-backup.db \
+  ~/backups/claude-manager-$(date +%Y%m%d).db
+docker exec claude-manager rm /data/manager-backup.db
 ```
 
 ### Disaster recovery
@@ -374,8 +371,8 @@ To restore on a new host:
    compose files, etc).
 2. `cp .env.example .env` and set `INSTANCE_*_DIR` to the new absolute
    host paths.
-3. `docker compose -f docker-compose.v2.yml --profile build-only build`
-4. `docker compose -f docker-compose.v2.yml up -d`
+3. `docker compose -f docker-compose.yml --profile build-only build`
+4. `docker compose -f docker-compose.yml up -d`
 5. From the new admin device, set `ADMIN_RESET_TOKEN` in `.env`,
    restart, register with `?reset_token=…`, then clear the env var.
 6. Each instance re-authenticates (`claude login`, `gh auth login`) on
@@ -392,7 +389,7 @@ Error: connect ENOENT /var/run/docker.sock
 ```
 
 The manager cannot reach the Docker daemon. Verify the socket mount in
-`docker-compose.v2.yml`:
+`docker-compose.yml`:
 
 ```yaml
 volumes:
@@ -415,13 +412,13 @@ Failed to pull image "claude-workspace:latest": ...
 ```bash
 docker images | grep claude-workspace
 # If missing:
-docker compose -f docker-compose.v2.yml --profile build-only build claude-workspace
+docker compose -f docker-compose.yml --profile build-only build claude-workspace
 ```
 
 ### `cm-ollama` exits / no GPU
 
 ```bash
-docker compose -f docker-compose.v2.yml logs cm-ollama
+docker compose -f docker-compose.yml logs cm-ollama
 ```
 
 Likely causes:
@@ -432,9 +429,9 @@ Likely causes:
 ### LiteLLM "Authentication Error"
 
 LiteLLM needs `LITELLM_MASTER_KEY` set on both `cm-litellm` (so it
-accepts admin calls from the manager) and `claude-manager-v2` (so it
+accepts admin calls from the manager) and `claude-manager` (so it
 can mint virtual keys). Both pick up the same `.env` value via
-`docker-compose.v2.yml`.
+`docker-compose.yml`.
 
 ### Restricted instance can't reach an allowed host
 
@@ -454,7 +451,7 @@ The most common issue is missing WebSocket upgrade headers. See
 ### File upload fails
 
 ```bash
-docker inspect claude-manager-v2 --format '{{ json .Mounts }}' | python3 -m json.tool
+docker inspect claude-manager --format '{{ json .Mounts }}' | python3 -m json.tool
 ls -la "${SHARED_DIR:-./data/shared}"
 ```
 
@@ -462,7 +459,7 @@ If `SHARED_DIR` wasn't set, Docker may have created `/shared` as a
 root-owned host directory. Set it in `.env`, recreate the manager:
 
 ```bash
-docker compose -f docker-compose.v2.yml up -d --force-recreate claude-manager-v2
+docker compose -f docker-compose.yml up -d --force-recreate claude-manager
 ```
 
 ---

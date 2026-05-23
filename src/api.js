@@ -91,11 +91,80 @@ export function updateInstance(id, fields) {
   });
 }
 
-export function recreateInstance(id, { dockerSocket }) {
+export function recreateInstance(id, opts) {
   return request(`/api/instances/${id}/recreate`, {
     method: 'POST',
-    body: JSON.stringify({ dockerSocket }),
+    body: JSON.stringify(opts),
   });
+}
+
+// --- Policies ---
+
+export function fetchPolicies() {
+  return request('/api/policies');
+}
+
+// --- Grants ---
+
+export function fetchGrants(instanceId) {
+  return request(`/api/instances/${instanceId}/grants`);
+}
+
+export function createGrant(instanceId, { capabilityName, expiryHours }) {
+  return request(`/api/instances/${instanceId}/grants`, {
+    method: 'POST',
+    body: JSON.stringify({ capabilityName, expiryHours }),
+  });
+}
+
+export function renewGrant(grantId, durationHours = 24) {
+  return request(`/api/grants/${grantId}/renew`, {
+    method: 'POST',
+    body: JSON.stringify({ durationHours }),
+  });
+}
+
+export function recreateWithoutGrant(grantId) {
+  return request(`/api/grants/${grantId}/recreate`, { method: 'POST' });
+}
+
+// --- LiteLLM ---
+
+export function fetchLiteLLMStatus() {
+  return request('/api/litellm/status');
+}
+
+export function fetchLiteLLMModels() {
+  return request('/api/litellm/models');
+}
+
+export function fetchInstanceLiteLLM(instanceId) {
+  return request(`/api/instances/${instanceId}/litellm`);
+}
+
+export function rotateLiteLLMKey(instanceId) {
+  return request(`/api/instances/${instanceId}/litellm/rotate`, { method: 'POST' });
+}
+
+// --- Access Requests ---
+
+export function fetchInstanceAccess(instanceId) {
+  return request(`/api/instances/${instanceId}/access`);
+}
+
+export function fetchAccessRequests() {
+  return request('/api/access-requests');
+}
+
+export function approveAccessRequest(requestId, expiryHours = 24) {
+  return request(`/api/access-requests/${requestId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ expiryHours }),
+  });
+}
+
+export function denyAccessRequest(requestId) {
+  return request(`/api/access-requests/${requestId}/deny`, { method: 'POST' });
 }
 
 // --- System ---
