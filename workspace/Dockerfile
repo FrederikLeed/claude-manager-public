@@ -87,7 +87,8 @@ USER claude
 # Skip permission prompts — these are sandboxed containers with no direct internet
 # Activate proxy bootstrap for Node.js (patches https.globalAgent) if proxy is configured
 RUN echo 'alias claude="claude --dangerously-skip-permissions"' >> /home/claude/.bashrc \
-    && echo '[ -n "$HTTPS_PROXY" ] && [ -f "$HOME/.proxy-bootstrap.js" ] && export NODE_PATH="/usr/lib/node_modules:${NODE_PATH:-}" && export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }-r $HOME/.proxy-bootstrap.js"' >> /home/claude/.bashrc
+    && echo '[ -n "$HTTPS_PROXY" ] && [ -f "$HOME/.proxy-bootstrap.js" ] && export NODE_PATH="/usr/lib/node_modules:${NODE_PATH:-}" && export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }-r $HOME/.proxy-bootstrap.js"' >> /home/claude/.bashrc \
+    && echo '[ -n "$GH_TOKEN_FILE" ] && [ -f "$GH_TOKEN_FILE" ] && export GH_TOKEN="$(cat "$GH_TOKEN_FILE")"' >> /home/claude/.bashrc
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

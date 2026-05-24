@@ -385,7 +385,8 @@ To restore on a new host:
 4. `docker compose up -d`
 5. From the new admin device, set `ADMIN_RESET_TOKEN` in `.env`,
    restart, register with `?reset_token=…`, then clear the env var.
-6. Each instance re-authenticates (`claude login`, `gh auth login`) on
+6. Each instance re-authenticates (`claude login`; GitHub via
+  `/workspace/.claude/secrets/gh_token` -> `GH_TOKEN`) on
    first use.
 
 ---
@@ -526,7 +527,8 @@ equivalent Docker access. Defence in depth:
   `/workspace/.claude` bind — no cross-contamination of code or
   project memory.
 - Auth is per-instance: each container runs its own `claude login`
-  (Max) and `gh auth login`.
+  (Max); GitHub access is loaded from `GH_TOKEN` via
+  `/workspace/.claude/secrets/gh_token`.
 - Instances share the `claude-manager-net` bridge and can reach each
   other by name *unless* their network policy blocks it (squid only
   filters external traffic — internal RFC1918 ranges are always

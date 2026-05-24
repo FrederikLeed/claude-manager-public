@@ -65,7 +65,7 @@ claude-manager/
 
 Push `data/` to GitHub, clone on a new host, `docker compose up` —
 settings and memory are restored. Each instance re-authenticates
-(`claude login` for `claude-max`, `gh auth login`) on first use.
+(`claude login` for `claude-max`; GitHub via `GH_TOKEN` loaded from `/workspace/.claude/secrets/gh_token`) on first use.
 
 ---
 

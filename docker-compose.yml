@@ -35,6 +35,7 @@ services:
       - LITELLM_KEY_FOUNDRY=${LITELLM_KEY_FOUNDRY:-}
       - LITELLM_KEY_FOUNDRY_LATEST=${LITELLM_KEY_FOUNDRY_LATEST:-}
       - LITELLM_DEFAULT_BUDGET=${LITELLM_DEFAULT_BUDGET:-20}
+      - GH_TOKEN_FILE=${GH_TOKEN_FILE:-/workspace/.claude/secrets/gh_token}
     networks:
       - claude-manager-net
 

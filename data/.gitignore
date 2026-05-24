@@ -20,6 +20,8 @@ claude-home/plugins/
 
 # Instance memory contents (per-instance, not for git)
 instance-memory/*/
+instance-memory/**/secrets/
+instance-memory/**/.config/secrets/
 
 # Shared files (user-specific, not for git)
 shared/*

@@ -367,6 +367,12 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   if (config.LITELLM_API_BASE) {
     containerEnv.push(`LITELLM_API_BASE=${config.LITELLM_API_BASE}`);
   }
+
+  // Per-instance GitHub token file path (token value is loaded in shell startup)
+  if (config.GH_TOKEN_FILE) {
+    containerEnv.push(`GH_TOKEN_FILE=${config.GH_TOKEN_FILE}`);
+  }
+
   if (llmBackend && llmBackend !== 'claude-max' && config.LITELLM_API_BASE) {
     containerEnv.push(`ANTHROPIC_BASE_URL=${config.LITELLM_API_BASE}`);
     // Use per-backend scoped virtual key for correct model routing

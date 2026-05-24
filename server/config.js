@@ -34,4 +34,6 @@ export const config = Object.freeze({
   LITELLM_API_BASE: process.env.LITELLM_API_BASE || '',
   LITELLM_MASTER_KEY: process.env.LITELLM_MASTER_KEY || '',
   LITELLM_DEFAULT_BUDGET: parseFloat(process.env.LITELLM_DEFAULT_BUDGET || '20'),
+  // Optional path (inside workspace containers) to per-instance GitHub token file
+  GH_TOKEN_FILE: process.env.GH_TOKEN_FILE || '/workspace/.claude/secrets/gh_token',
 });

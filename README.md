@@ -50,7 +50,7 @@ Everything Claude Manager gives the operator, on one page.
 **Data architecture**
 - Per-instance project memory isolated at `/workspace/.claude`
 - Shared global Claude config (CLAUDE.md + settings + global memories)
-- Per-instance auth — each instance runs its own `claude login` (Max) and `gh auth login`
+- Per-instance auth — each instance runs its own `claude login` (Max) and loads GitHub auth from `GH_TOKEN` (read from `/workspace/.claude/secrets/gh_token`)
 - Shared storage at `/shared` for cross-instance files and uploads
 - Everything in `data/` — git-tracked for backup
 
@@ -195,7 +195,7 @@ claude-manager/
 **Isolation model:**
 - Each instance has its own workspace volume, project memory, and auth — no cross-contamination
 - Global Claude settings, CLAUDE.md, and global memories shared via `data/claude-home/`
-- Auth is per-instance: each instance runs its own `claude login` (Max) and `gh auth login`
+- Auth is per-instance: each instance runs its own `claude login` (Max); GitHub PATs can be stored per-instance at `/workspace/.claude/secrets/gh_token`
 - `/shared` is explicitly shared for cross-instance files, templates, tools
 
 **Backup:** Push to GitHub. If your machine dies, clone the repo and `docker compose up` — settings and memory are restored. Each instance re-auths on first use.
@@ -255,6 +255,30 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
 Open [http://localhost:3002](http://localhost:3002) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
+
+### Per-instance GitHub PAT (fine-grained)
+
+Each workspace instance can load its own PAT from:
+
+`/workspace/.claude/secrets/gh_token`
+
+Create it inside the target instance terminal:
+
+```bash
+mkdir -p /workspace/.claude/secrets
+chmod 700 /workspace/.claude/secrets
+cat > /workspace/.claude/secrets/gh_token
+chmod 600 /workspace/.claude/secrets/gh_token
+```
+
+Open a new shell in that instance, then verify:
+
+```bash
+echo "${GH_TOKEN:+set}"
+gh auth status --hostname github.com
+```
+
+`gh` will use `GH_TOKEN` directly, so `gh auth login` is not required for this flow.
 
 ### Docker Build
 
