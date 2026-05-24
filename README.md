@@ -85,7 +85,7 @@ Six containers, one bridge network. The manager creates and tears down workspace
 | `claude-manager` | `Dockerfile` | Fastify 5 backend + React 19 frontend |
 | `cm-proxy` | `proxy/Dockerfile` | squid forward proxy — per-container network ACLs |
 | `cm-litellm` | `litellm/Dockerfile` | LiteLLM proxy — Claude API → Ollama / Azure |
-| `cm-ollama` | `ollama/ollama` | Qwen3 30B-A3B on NVIDIA GPU |
+| `cm-ollama` | `ollama/ollama` | Qwen3 30B-A3B (optional NVIDIA acceleration via override) |
 | `cm-litellm-db` | `postgres:16` | PostgreSQL for LiteLLM virtual-key state |
 | `cm-instance-*` | `workspace/Dockerfile` | Per-project workspace containers |
 
@@ -233,7 +233,7 @@ Connect to the same tmux session from multiple devices — desktop and mobile se
 ### Prerequisites
 
 - Docker Engine 20.10+ with Compose v2 and socket at `/var/run/docker.sock`
-- For the `local-llm` backend: NVIDIA GPU + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) (Qwen3 30B-A3B needs ~24 GB VRAM)
+- Optional (Linux/NVIDIA hosts): NVIDIA GPU + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) for accelerated `local-llm` (Qwen3 30B-A3B needs ~24 GB VRAM)
 - For `foundry*`: Azure AI Foundry API keys
 
 ### Quick Start
@@ -243,6 +243,15 @@ git clone https://github.com/FrederikLeed/claude-manager-public.git && cd claude
 cp .env.example .env                               # set absolute host paths + LiteLLM keys
 docker compose --profile build-only build           # build all images
 docker compose up -d                                # start the stack
+```
+
+### NVIDIA GPU override (Linux)
+
+By default, the stack starts without a hard GPU reservation so it runs on macOS and non-NVIDIA hosts.
+If you have NVIDIA + Container Toolkit, start with the GPU override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 ```
 
 Open [http://localhost:3002](http://localhost:3002) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
