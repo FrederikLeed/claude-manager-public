@@ -256,6 +256,20 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 Open [http://localhost:3002](http://localhost:3002) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 
+### Dev Containers (attach to running instance)
+
+Use this flow when you want VS Code to open the exact same files Claude is editing inside a managed instance container.
+
+1. Install the VS Code extension: **Dev Containers** (`ms-vscode-remote.remote-containers`).
+2. In VS Code, open **Command Palette** and run:
+	- `Dev Containers: Attach to Running Container...`
+3. Select your instance container (for example: `cm-souschef-ai-2f245512`).
+4. In the attached VS Code window, run:
+	- `File: Open Folder...`
+5. Open the project folder inside the container (for example: `/workspace/SousChef.ai`).
+
+You are now editing the same in-container filesystem and paths used by Claude Manager terminal sessions.
+
 ### Per-instance GitHub PAT (fine-grained)
 
 Each workspace instance can load its own PAT from:
