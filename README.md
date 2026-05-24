@@ -278,6 +278,22 @@ echo "${GH_TOKEN:+set}"
 gh auth status --hostname github.com
 ```
 
+If `GH_TOKEN` is still empty:
+
+```bash
+# 1) Confirm the token file exists
+ls -l /workspace/.claude/secrets/gh_token
+
+# 2) Start a fresh interactive shell (required for .bashrc loading)
+exec bash
+
+# 3) Re-check
+echo "${GH_TOKEN:+set}"
+gh auth status --hostname github.com
+```
+
+If this instance was created before the `GH_TOKEN_FILE` rollout, recreate the instance from the dashboard so it receives the updated environment and shell bootstrap.
+
 `gh` will use `GH_TOKEN` directly, so `gh auth login` is not required for this flow.
 
 ### Docker Build
