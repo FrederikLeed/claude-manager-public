@@ -87,6 +87,8 @@ export default async function sharedRoutes(fastify) {
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
       '.ogg': 'audio/ogg',
+      '.aiff': 'audio/aiff',
+      '.aif': 'audio/aiff',
     };
     if (contentTypes[ext]) {
       reply.type(contentTypes[ext]);

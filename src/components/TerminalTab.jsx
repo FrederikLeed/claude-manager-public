@@ -100,12 +100,8 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       return override;
     }
 
-    // Auto-detect drop-in files from /shared.
-    const candidates = [
-      '/api/shared/notification-sound.mp3',
-      '/api/shared/notification-sound.wav',
-      '/api/shared/notification-sound.ogg',
-    ];
+    // Auto-detect drop-in sound from operator-level claude-home storage.
+    const candidates = ['/api/system/notification-sound'];
 
     for (const url of candidates) {
       try {
@@ -119,7 +115,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       }
     }
 
-    completionAudioUrlRef.current = null;
+    // Do not cache misses forever; sound file may appear later.
     return null;
   };
 
@@ -167,11 +163,12 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       notification.close();
       window.focus();
     };
+    setTimeout(() => notification.close(), 10000);
   };
 
-  const notifyCompletion = () => {
+  const notifyCompletion = (source = 'marker', force = false) => {
     const now = Date.now();
-    if (now - lastNotifyAtRef.current < MIN_NOTIFY_INTERVAL_MS) {
+    if (!force && now - lastNotifyAtRef.current < MIN_NOTIFY_INTERVAL_MS) {
       return;
     }
     lastNotifyAtRef.current = now;
@@ -179,15 +176,16 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
     console.info('[terminal-notify] Completion marker detected', {
       instanceId,
       instanceName,
+      source,
       hidden: document.hidden,
       hasFocus: document.hasFocus(),
     });
 
     // Always show a visual in-app cue; click to dismiss.
     showToast(
-      instanceName ? `Claude finished in ${instanceName} (click to dismiss)` : 'Claude finished (click to dismiss)',
+      instanceName ? `Claude finished in ${instanceName}` : 'Claude finished',
       'info',
-      0,
+      10000,
     );
 
     // Always try sound, even when Claude Manager is focused.
@@ -211,7 +209,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
     completionBufferRef.current = combined.slice(-128);
 
     if (combined.includes(COMPLETION_MARKER)) {
-      notifyCompletion();
+      notifyCompletion('marker');
     }
   };
 

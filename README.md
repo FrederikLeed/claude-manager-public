@@ -225,13 +225,14 @@ Completion sound is configurable. Drop one of these files into `/shared`:
 - `notification-sound.mp3`
 - `notification-sound.wav`
 - `notification-sound.ogg`
+- `notification-sound.aiff` (or `.aif`)
 
 The UI will try those files first (via `/api/shared/...`) and fall back to the built-in tone if none are present or playable.
 
 Optional browser override (per device/browser profile):
 
 ```js
-localStorage.setItem('cm:completionSoundUrl', '/api/shared/notification-sound.wav')
+localStorage.setItem('cm:completionSoundUrl', '/api/system/notification-sound')
 ```
 
 Remove override:

@@ -8,6 +8,7 @@ export const config = Object.freeze({
   HOST_CLAUDE_DIR: process.env.HOST_CLAUDE_DIR || '/host-claude',
   MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '20', 10),
   SHARED_DIR: process.env.SHARED_DIR || '/shared',
+  CLAUDE_HOME_DIR: process.env.CLAUDE_HOME_DIR || '/claude-home',
   // Host paths to bind-mount into new instances (these must be HOST paths, not manager container paths)
   INSTANCE_SHARED_DIR: process.env.INSTANCE_SHARED_DIR || '',
   INSTANCE_MEMORY_DIR: process.env.INSTANCE_MEMORY_DIR || '',
