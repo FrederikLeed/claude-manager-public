@@ -35,12 +35,70 @@ function execCommandCopy(text) {
   try { document.execCommand('copy'); } catch { /* ignore */ }
   document.body.removeChild(ta);
 }
-export default function TerminalTab({ instanceId, visible }) {
+export default function TerminalTab({ instanceId, instanceName, visible }) {
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitRef = useRef(null);
   const wsRef = useRef(null);
   const resizeObserverRef = useRef(null);
+  const audioContextRef = useRef(null);
+
+  const ensureAudioContext = () => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextClass();
+    }
+
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(() => {});
+    }
+
+    return audioContextRef.current;
+  };
+
+  const playCompletionTone = () => {
+    const audioContext = ensureAudioContext();
+    if (!audioContext) return;
+
+    const now = audioContext.currentTime;
+    const gain = audioContext.createGain();
+    const osc = audioContext.createOscillator();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(660, now + 0.12);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+
+    osc.connect(gain);
+    gain.connect(audioContext.destination);
+    osc.start(now);
+    osc.stop(now + 0.45);
+  };
+
+  const showCompletionNotification = () => {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      return;
+    }
+    if (Notification.permission !== 'granted') return;
+
+    new Notification(instanceName ? `Claude finished in ${instanceName}` : 'Claude finished', {
+      body: 'The current task appears to be complete.',
+      silent: true,
+    });
+  };
+
+  const notifyCompletion = () => {
+    if (document.hidden || !document.hasFocus()) {
+      playCompletionTone();
+      showCompletionNotification();
+    }
+  };
 
   // Create terminal + WebSocket on mount, destroy on unmount
   useEffect(() => {
@@ -128,6 +186,15 @@ export default function TerminalTab({ instanceId, visible }) {
     if (!el.querySelector('.xterm')) {
       term.open(el);
 
+      const unlockAudio = () => {
+        ensureAudioContext();
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {});
+        }
+      };
+      el.addEventListener('pointerdown', unlockAudio, { passive: true });
+      el.addEventListener('keydown', unlockAudio);
+
       // Disable right-click context menu in terminal
       el.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -149,7 +216,10 @@ export default function TerminalTab({ instanceId, visible }) {
 
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(event.data));
+          const bytes = new Uint8Array(event.data);
+          const text = new TextDecoder().decode(bytes);
+          if (text.includes('\x07')) notifyCompletion();
+          term.write(bytes);
         } else {
           try {
             const msg = JSON.parse(event.data);
@@ -163,6 +233,7 @@ export default function TerminalTab({ instanceId, visible }) {
               return;
             }
           } catch { /* not JSON */ }
+          if (event.data.includes('\x07')) notifyCompletion();
           term.write(event.data);
         }
       };
@@ -214,6 +285,10 @@ export default function TerminalTab({ instanceId, visible }) {
         const cleanup = () => window.visualViewport.removeEventListener('resize', handleViewportResize);
         el._viewportCleanup = cleanup;
       }
+
+      term.onBell(() => {
+        notifyCompletion();
+      });
     }
 
     // Fit whenever tab becomes visible

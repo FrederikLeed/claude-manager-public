@@ -56,3 +56,8 @@ Always provide a clear, specific reason — the admin sees it in the approval UI
 - `cm-access --status` — see your current policy and approved extras
 - `cm-access --list` — see all available policies and their allowed hosts
 - `cm-access --show <policy>` — details on a specific policy
+
+## Completion notifications
+
+- When you have finished the user's task and are waiting for the next prompt, emit a single ASCII BEL (`\a`) on its own line so the UI can notify the operator.
+- Do not emit the bell during intermediate tool calls or partial progress updates.

@@ -244,6 +244,7 @@ export default function TerminalPanel({ tabs, activeTabId, onActivate, onClose, 
             <TerminalTab
               key={tab.id}
               instanceId={tab.instanceId}
+              instanceName={tab.name}
               visible={tab.id === activeTabId}
             />
           ))}

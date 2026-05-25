@@ -218,6 +218,8 @@ First device auto-approved as admin (TOFU). Subsequent devices require admin app
 
 Connect to the same tmux session from multiple devices — desktop and mobile see identical output. Sessions persist across disconnects; reconnecting picks up exactly where you left off.
 
+If Claude finishes a task while the terminal is not in focus, the UI can play a short tone and, when permitted by the browser, show a desktop notification. The signal is a single ASCII BEL (`\a`) emitted by Claude at task completion.
+
 **Session lifecycle (state machine):**
 
 ![Terminal Session Lifecycle](docs/diagrams/terminal-state.png)

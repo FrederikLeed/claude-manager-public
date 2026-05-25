@@ -1,7 +1,7 @@
 ---
 project: claude-manager
 repo: https://github.com/FrederikLeed/claude-manager-public
-updated: 2026-05-23
+updated: 2026-05-25
 status: active
 ---
 
@@ -15,6 +15,7 @@ Core functionality:
 - Instance lifecycle (create, start, stop, remove) via web UI
 - Container discovery and adoption of existing claude-* containers
 - Web terminal (xterm.js v6 + tmux shared sessions)
+- Task-completion notifications via bell-triggered browser sound/notification
 - Real-time WebSocket updates from Docker event stream
 - Device-based authentication (TOFU — first device auto-admin)
 - Per-container network policy enforcement via squid proxy
@@ -68,7 +69,7 @@ Core functionality:
 - **iptables lock + proxy** — defense in depth: proxy filters by domain, iptables prevents bypass
 - **Mount template learning** — new instances auto-learn bind mounts from existing containers
 - **Per-instance memory** — each instance gets isolated `/workspace/.claude`
-- **Global CLAUDE.md** — AI agent instructions distributed via bind mount (live updates)
+- **Global CLAUDE.md** — AI agent instructions distributed via bind mount (live updates), including completion-bell guidance
 
 ## Quick Deploy
 
