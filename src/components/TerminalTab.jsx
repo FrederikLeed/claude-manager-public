@@ -4,6 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { showToast } from './Toast.jsx';
 
+const COMPLETION_MARKER = '[CM_DONE]';
+const MIN_NOTIFY_INTERVAL_MS = 15000;
+
 /**
  * A single terminal tab — creates its own xterm instance and WebSocket.
  * Only mounts the terminal into the DOM when `visible` is true.
@@ -43,6 +46,10 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
   const wsRef = useRef(null);
   const resizeObserverRef = useRef(null);
   const audioContextRef = useRef(null);
+  const completionAudioRef = useRef(null);
+  const completionAudioUrlRef = useRef(undefined);
+  const completionBufferRef = useRef('');
+  const lastNotifyAtRef = useRef(0);
 
   const ensureAudioContext = () => {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -59,7 +66,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
     return audioContextRef.current;
   };
 
-  const playCompletionTone = () => {
+  const playFallbackTone = () => {
     const audioContext = ensureAudioContext();
     if (!audioContext) return;
 
@@ -79,6 +86,66 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
     gain.connect(audioContext.destination);
     osc.start(now);
     osc.stop(now + 0.45);
+  };
+
+  const resolveCompletionSoundUrl = async () => {
+    if (completionAudioUrlRef.current !== undefined) {
+      return completionAudioUrlRef.current;
+    }
+
+    // Optional explicit override in browser storage.
+    const override = localStorage.getItem('cm:completionSoundUrl');
+    if (override) {
+      completionAudioUrlRef.current = override;
+      return override;
+    }
+
+    // Auto-detect drop-in files from /shared.
+    const candidates = [
+      '/api/shared/notification-sound.mp3',
+      '/api/shared/notification-sound.wav',
+      '/api/shared/notification-sound.ogg',
+    ];
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url, { method: 'HEAD', credentials: 'include' });
+        if (res.ok) {
+          completionAudioUrlRef.current = url;
+          return url;
+        }
+      } catch {
+        // Keep trying candidates.
+      }
+    }
+
+    completionAudioUrlRef.current = null;
+    return null;
+  };
+
+  const playCompletionTone = async () => {
+    const url = await resolveCompletionSoundUrl();
+    if (url) {
+      try {
+        if (!completionAudioRef.current || completionAudioRef.current.src !== url) {
+          completionAudioRef.current = new Audio(url);
+          completionAudioRef.current.preload = 'auto';
+        }
+        completionAudioRef.current.currentTime = 0;
+        await completionAudioRef.current.play();
+        console.info('[terminal-notify] Played custom completion sound', { instanceId, instanceName, url });
+        return;
+      } catch (err) {
+        console.warn('[terminal-notify] Failed custom completion sound, using fallback tone', {
+          instanceId,
+          instanceName,
+          url,
+          error: err?.message,
+        });
+      }
+    }
+
+    playFallbackTone();
   };
 
   const showCompletionNotification = () => {
@@ -103,7 +170,13 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
   };
 
   const notifyCompletion = () => {
-    console.info('[terminal-notify] Completion bell detected', {
+    const now = Date.now();
+    if (now - lastNotifyAtRef.current < MIN_NOTIFY_INTERVAL_MS) {
+      return;
+    }
+    lastNotifyAtRef.current = now;
+
+    console.info('[terminal-notify] Completion marker detected', {
       instanceId,
       instanceName,
       hidden: document.hidden,
@@ -117,15 +190,28 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       0,
     );
 
+    // Always try sound, even when Claude Manager is focused.
+    void playCompletionTone();
+
     if (document.hidden || !document.hasFocus()) {
-      console.info('[terminal-notify] Tab is not focused; playing sound and attempting desktop notification', {
+      console.info('[terminal-notify] Tab is not focused; attempting desktop notification', {
         instanceId,
         instanceName,
       });
-      playCompletionTone();
       showCompletionNotification();
     } else {
-      console.info('[terminal-notify] Tab is focused; showing in-app toast only', { instanceId, instanceName });
+      console.info('[terminal-notify] Tab is focused; sound + in-app toast shown', { instanceId, instanceName });
+    }
+  };
+
+  const processCompletionMarkers = (text) => {
+    if (!text) return;
+
+    const combined = `${completionBufferRef.current}${text}`;
+    completionBufferRef.current = combined.slice(-128);
+
+    if (combined.includes(COMPLETION_MARKER)) {
+      notifyCompletion();
     }
   };
 
@@ -248,7 +334,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
         if (event.data instanceof ArrayBuffer) {
           const bytes = new Uint8Array(event.data);
           const text = new TextDecoder().decode(bytes);
-          if (text.includes('\x07')) notifyCompletion();
+          processCompletionMarkers(text);
           term.write(bytes);
         } else {
           try {
@@ -263,7 +349,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
               return;
             }
           } catch { /* not JSON */ }
-          if (event.data.includes('\x07')) notifyCompletion();
+          processCompletionMarkers(event.data);
           term.write(event.data);
         }
       };
@@ -317,8 +403,8 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       }
 
       term.onBell(() => {
-        console.info('[terminal-notify] xterm bell event received', { instanceId, instanceName });
-        notifyCompletion();
+        // Ignore generic terminal bells to avoid noisy false positives.
+        console.info('[terminal-notify] xterm bell event ignored (marker-only mode)', { instanceId, instanceName });
       });
     }
 

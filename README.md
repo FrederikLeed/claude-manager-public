@@ -220,6 +220,26 @@ Connect to the same tmux session from multiple devices — desktop and mobile se
 
 If Claude finishes a task while the terminal is not in focus, the UI can play a short tone and, when permitted by the browser, show a desktop notification. The signal is a single ASCII BEL (`\a`) emitted by Claude at task completion.
 
+Completion sound is configurable. Drop one of these files into `/shared`:
+
+- `notification-sound.mp3`
+- `notification-sound.wav`
+- `notification-sound.ogg`
+
+The UI will try those files first (via `/api/shared/...`) and fall back to the built-in tone if none are present or playable.
+
+Optional browser override (per device/browser profile):
+
+```js
+localStorage.setItem('cm:completionSoundUrl', '/api/shared/notification-sound.wav')
+```
+
+Remove override:
+
+```js
+localStorage.removeItem('cm:completionSoundUrl')
+```
+
 **Session lifecycle (state machine):**
 
 ![Terminal Session Lifecycle](docs/diagrams/terminal-state.png)
@@ -311,6 +331,12 @@ gh auth status --hostname github.com
 If this instance was created before the `GH_TOKEN_FILE` rollout, recreate the instance from the dashboard so it receives the updated environment and shell bootstrap.
 
 `gh` will use `GH_TOKEN` directly, so `gh auth login` is not required for this flow.
+
+To test completion notifications manually in any terminal tab:
+
+```bash
+printf '[CM_DONE]\n\a\n'
+```
 
 ### Docker Build
 

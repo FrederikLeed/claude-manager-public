@@ -59,5 +59,5 @@ Always provide a clear, specific reason — the admin sees it in the approval UI
 
 ## Completion notifications
 
-- When you have finished the user's task and are waiting for the next prompt, emit a single ASCII BEL (`\a`) on its own line so the UI can notify the operator.
+- When you have finished the user's task and are waiting for the next prompt, emit `[CM_DONE]` on its own line and then emit a single ASCII BEL (`\a`) on its own line so the UI can notify the operator.
 - Do not emit the bell during intermediate tool calls or partial progress updates.

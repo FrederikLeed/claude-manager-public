@@ -1,5 +1,5 @@
-import { createWriteStream } from 'fs';
-import { mkdir } from 'fs/promises';
+import { createReadStream, createWriteStream } from 'fs';
+import { mkdir, stat } from 'fs/promises';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { config } from '../config.js';
@@ -61,5 +61,37 @@ export default async function sharedRoutes(fastify) {
     const size = writeStream.bytesWritten;
 
     return { filename, size };
+  });
+
+  fastify.get('/api/shared/:filename', async (request, reply) => {
+    const requested = request.params?.filename || '';
+    const filename = sanitizeFilename(requested);
+
+    if (!filename || filename !== requested) {
+      return reply.code(400).send({ error: 'Invalid filename' });
+    }
+
+    const filePath = path.join(config.SHARED_DIR, filename);
+
+    try {
+      const info = await stat(filePath);
+      if (!info.isFile()) {
+        return reply.code(404).send({ error: 'File not found' });
+      }
+    } catch {
+      return reply.code(404).send({ error: 'File not found' });
+    }
+
+    const ext = path.extname(filename).toLowerCase();
+    const contentTypes = {
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+    };
+    if (contentTypes[ext]) {
+      reply.type(contentTypes[ext]);
+    }
+
+    return reply.send(createReadStream(filePath));
   });
 }
