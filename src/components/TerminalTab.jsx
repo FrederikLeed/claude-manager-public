@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { showToast } from './Toast.jsx';
 
 /**
  * A single terminal tab — creates its own xterm instance and WebSocket.
@@ -83,20 +84,48 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
   const showCompletionNotification = () => {
     if (!('Notification' in window)) return;
     if (Notification.permission === 'default') {
+      console.info('[terminal-notify] Browser notification permission not decided yet', { instanceId, instanceName });
       return;
     }
-    if (Notification.permission !== 'granted') return;
+    if (Notification.permission !== 'granted') {
+      console.info('[terminal-notify] Browser notification permission denied', { instanceId, instanceName });
+      return;
+    }
 
-    new Notification(instanceName ? `Claude finished in ${instanceName}` : 'Claude finished', {
+    const notification = new Notification(instanceName ? `Claude finished in ${instanceName}` : 'Claude finished', {
       body: 'The current task appears to be complete.',
       silent: true,
     });
+    notification.onclick = () => {
+      notification.close();
+      window.focus();
+    };
   };
 
   const notifyCompletion = () => {
+    console.info('[terminal-notify] Completion bell detected', {
+      instanceId,
+      instanceName,
+      hidden: document.hidden,
+      hasFocus: document.hasFocus(),
+    });
+
+    // Always show a visual in-app cue; click to dismiss.
+    showToast(
+      instanceName ? `Claude finished in ${instanceName} (click to dismiss)` : 'Claude finished (click to dismiss)',
+      'info',
+      0,
+    );
+
     if (document.hidden || !document.hasFocus()) {
+      console.info('[terminal-notify] Tab is not focused; playing sound and attempting desktop notification', {
+        instanceId,
+        instanceName,
+      });
       playCompletionTone();
       showCompletionNotification();
+    } else {
+      console.info('[terminal-notify] Tab is focused; showing in-app toast only', { instanceId, instanceName });
     }
   };
 
@@ -188,6 +217,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
 
       const unlockAudio = () => {
         ensureAudioContext();
+        console.info('[terminal-notify] User interaction detected; audio context prepared', { instanceId, instanceName });
         if ('Notification' in window && Notification.permission === 'default') {
           Notification.requestPermission().catch(() => {});
         }
@@ -287,6 +317,7 @@ export default function TerminalTab({ instanceId, instanceName, visible }) {
       }
 
       term.onBell(() => {
+        console.info('[terminal-notify] xterm bell event received', { instanceId, instanceName });
         notifyCompletion();
       });
     }

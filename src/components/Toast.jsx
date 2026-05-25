@@ -17,6 +17,10 @@ export function showToast(message, type = 'info', duration = 4000) {
 export default function ToastContainer() {
   const [toasts, setToasts] = useState([]);
 
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   _addToast = useCallback((toast) => {
     setToasts((prev) => [...prev, toast]);
     if (toast.duration > 0) {
@@ -33,7 +37,9 @@ export default function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`px-4 py-3 rounded-lg text-sm shadow-lg border animate-slide-in ${typeStyles[toast.type] || typeStyles.info}`}
+          onClick={() => dismissToast(toast.id)}
+          title="Click to dismiss"
+          className={`px-4 py-3 rounded-lg text-sm shadow-lg border animate-slide-in cursor-pointer ${typeStyles[toast.type] || typeStyles.info}`}
         >
           {toast.message}
         </div>
