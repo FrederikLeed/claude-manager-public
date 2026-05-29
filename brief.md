@@ -14,7 +14,7 @@ Self-hosted Docker container management UI for Claude Code workspaces. Runs as a
 Core functionality:
 - Instance lifecycle (create, start, stop, remove) via web UI
 - Container discovery and adoption of existing claude-* containers
-- Web terminal (xterm.js v6 + tmux shared sessions)
+- Web terminal — xterm.js v6, WebGL renderer (DOM fallback), shared tmux sessions, auto-reconnect, Ctrl+F search, clickable links, OSC 52 clipboard (copy-on-select + right-click / Ctrl+V paste), mobile control-key bar (Esc/Tab/Ctrl-C/arrows)
 - Real-time WebSocket updates from Docker event stream
 - Device-based authentication (TOFU — first device auto-admin)
 - Per-container network policy enforcement via squid proxy
@@ -50,10 +50,10 @@ Core functionality:
 - iptables lock in entrypoint blocks direct internet (prevents proxy bypass)
 - Unrestricted containers: no proxy, no iptables, full access
 
-**Data directory (`data/`)** — git-tracked for backup:
+**Data directory (`data/`)** — git-tracked for backup (push to GitHub to back up, clone to restore):
 - `data/shared/` → `/shared` in all instances
-- `data/claude-home/` → `~/.claude` in all instances (global CLAUDE.md)
-- `data/instance-memory/<slug>/` → `/workspace/.claude` per instance
+- `data/claude-home/` → `~/.claude` in all instances; **only** `CLAUDE.md` + `settings.json` are tracked — session transcripts, auth, caches, file-history are gitignored (`data/.gitignore`) and must never be committed (they can contain secrets)
+- `data/instance-memory/<slug>/` → `/workspace/.claude` per instance — **tracked**, so per-instance project memory survives host loss
 
 **LLM backends:**
 - `claude-max` — direct Anthropic API (requires `claude login` in container)
@@ -70,14 +70,16 @@ Core functionality:
 - **Proxy over iptables** — domain-level filtering, no IP resolution games, instant policy changes
 - **iptables lock + proxy** — defense in depth: proxy filters by domain, iptables prevents bypass
 - **Mount template learning** — new instances auto-learn bind mounts from existing containers
-- **Per-instance memory** — each instance gets isolated `/workspace/.claude`
+- **Per-instance memory** — each instance gets isolated `/workspace/.claude` (git-tracked for backup)
 - **Global CLAUDE.md** — AI agent instructions distributed via bind mount (live updates)
+- **Always-latest Claude Code** — manager rebuilds the `claude-workspace` image over the Docker API (needs `./workspace` mounted as `/workspace-src`); existing instances opt in via per-instance "Update Claude"
+- **Clipboard over OSC 52** — tmux `set-clipboard on` → custom xterm OSC 52 handler writes the host clipboard (no server-side polling)
 
 ## Quick Deploy
 
 ```bash
 git clone https://github.com/FrederikLeed/claude-manager-public.git && cd claude-manager-public
-cp .env.example .env                               # set host paths + LITELLM_MASTER_KEY
+cp .env.example .env                               # set host paths, TZ, LITELLM_MASTER_KEY
 docker compose --profile build-only build           # build all images
 docker compose up -d                                # start the stack
 ```
@@ -100,7 +102,7 @@ See [docs/deployment.md](docs/deployment.md) for full deployment guide.
 docker compose --profile test run --rm test
 ```
 
-10 test files, uses real Docker containers.
+11 test files, uses real Docker containers. Static config-lint (`tests/00-config-lint.test.js`) runs without Docker.
 
 ## Roadmap
 
