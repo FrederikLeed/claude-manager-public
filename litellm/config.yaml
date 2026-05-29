@@ -33,6 +33,12 @@ model_list:
       api_base: http://cm-ollama:11434
       num_ctx: 8192
       num_batch: 1024
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: ollama_chat/qwen3:30b-a3b
+      api_base: http://cm-ollama:11434
+      num_ctx: 8192
+      num_batch: 1024
   - model_name: claude-opus-4-7
     litellm_params:
       model: ollama_chat/qwen3:30b-a3b

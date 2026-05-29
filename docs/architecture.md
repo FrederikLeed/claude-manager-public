@@ -157,7 +157,7 @@ For any non-`claude-max` backend, the manager:
    `ANTHROPIC_API_KEY=<virtual-key>` into the container, so Claude Code
    speaks its native protocol to LiteLLM.
 3. LiteLLM (`litellm/config.yaml`) maps Claude model names
-   (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`,
+   (`claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`,
    etc.) to `ollama_chat/qwen3:30b-a3b`. For `foundry`/`foundry-latest`,
    the relevant `gpt-…` models are routed to Azure via the
    OpenAI-compatible endpoint.

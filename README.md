@@ -159,7 +159,7 @@ Each instance picks one LLM backend at creation time.
 | `foundry` | Azure AI Foundry `gpt-4.1-mini-1` via LiteLLM |
 | `foundry-latest` | Azure AI Foundry `gpt-chat-latest` via LiteLLM |
 
-For any backend other than `claude-max`, the manager mints a **per-instance LiteLLM virtual key** with a budget (default $20) and injects `ANTHROPIC_BASE_URL=http://cm-litellm:4000` + `ANTHROPIC_API_KEY=<virtual-key>` so Claude Code speaks Claude's protocol to LiteLLM. LiteLLM's `model_list` aliases Claude model names (`claude-opus-4-7`, `claude-sonnet-4-6`, …) to the chosen backend.
+For any backend other than `claude-max`, the manager mints a **per-instance LiteLLM virtual key** with a budget (default $20) and injects `ANTHROPIC_BASE_URL=http://cm-litellm:4000` + `ANTHROPIC_API_KEY=<virtual-key>` so Claude Code speaks Claude's protocol to LiteLLM. LiteLLM's `model_list` aliases Claude model names (`claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-4-6`, …) to the chosen backend.
 
 The LiteLLM panel on each instance card shows usage and budget.
 
