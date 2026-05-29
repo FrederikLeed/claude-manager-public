@@ -1,7 +1,7 @@
 ---
 project: claude-manager
 repo: https://github.com/FrederikLeed/claude-manager-public
-updated: 2026-05-23
+updated: 2026-05-29
 status: active
 ---
 
@@ -22,6 +22,9 @@ Core functionality:
 - `cm-access` CLI inside containers for agents to discover and request network access
 - Capability grants (time-limited docker socket, network upgrades)
 - Per-instance LLM backend selector (Claude Max, Local LLM, Azure AI Foundry)
+- Task-completion notifications (desktop + toast + chime) + live per-instance token/context usage, via the in-container `cm-notify` Stop/Notification hook → `/api/instances/:id/event`
+- Always-latest Claude Code — manager rebuilds the workspace image over the Docker API (daily npm check + manual button); per-instance "Update Claude" recreates onto the latest image retaining data (`/api/instances/:id/update-claude`, `/api/workspace-image`)
+- Timezone sync — manager propagates `TZ` into every instance
 - Mobile-responsive layout
 
 ## Architecture
@@ -30,13 +33,13 @@ Core functionality:
 - `claude-manager` — Fastify 5 backend + React 19 frontend, manages Docker via socket
 - `cm-proxy` — squid forward proxy, enforces per-container network allowlists
 - `cm-litellm` — LiteLLM proxy, routes Claude Code requests to local or cloud LLMs
-- `cm-ollama` — Ollama with NVIDIA GPU, serves local models (Qwen3 30B-A3B)
+- `cm-ollama` — Ollama serving local models (Qwen3 30B-A3B); CPU by default, GPU via `docker-compose.gpu.yml` overlay
 - `cm-litellm-db` — PostgreSQL 16 for LiteLLM state
 - Workspace containers — `claude-workspace:latest` image, managed instances
 
 **Four Docker images built from this repo:**
 - `claude-manager` (Dockerfile) — Node.js 22, Fastify 5, React 19, multi-stage build
-- `claude-workspace` (workspace/Dockerfile) — Ubuntu 24.04, Node.js 22, Claude Code, gh CLI, Docker CLI, cm-access
+- `claude-workspace` (workspace/Dockerfile) — Ubuntu 24.04, Node.js 22, Claude Code, gh CLI, Docker CLI, cm-access, cm-notify hook (managed-settings.json)
 - `cm-proxy` (proxy/Dockerfile) — squid + inotify ACL watcher
 - `cm-litellm` (litellm/Dockerfile) — LiteLLM with baked-in config
 
@@ -79,9 +82,15 @@ docker compose --profile build-only build           # build all images
 docker compose up -d                                # start the stack
 ```
 
-Open **http://localhost:3002** — first browser is auto-approved as admin.
+Open **http://localhost:3000** — first browser is auto-approved as admin.
 
-Without GPU: comment out `cm-ollama` in `docker-compose.yml`. The `local-llm` backend won't be available, but `claude-max` and `foundry*` work fine.
+With an NVIDIA GPU, layer the overlay so Ollama claims it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+Without a GPU the base stack still starts — `cm-ollama` runs on CPU (slow for `local-llm`); `claude-max` and `foundry*` are unaffected.
 
 See [docs/deployment.md](docs/deployment.md) for full deployment guide.
 
@@ -95,4 +104,4 @@ docker compose --profile test run --rm test
 
 ## Roadmap
 
-See [docs/roadmap.md](docs/roadmap.md) and the [GitHub issues](https://github.com/FrederikLeed/claude-manager-public/issues) for what's planned next.
+- Publish project

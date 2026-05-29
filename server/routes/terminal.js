@@ -94,13 +94,18 @@ export default async function terminalRoutes(fastify) {
     const session = { socket, stream, exec, clipPoll: null, heartbeat, idleTimer, instanceId: id };
     activeSessions.set(sessionId, session);
 
-    // --- Poll tmux clipboard file for changes ---
+    // --- Clipboard ---
+    // Preferred path: tmux `set-clipboard on` (new workspace image) emits OSC 52
+    // over this stream; the client decodes it. No polling involved.
+    // Fallback for instances still on the OLD image (set-clipboard off + copy-pipe
+    // to /tmp/.tmux-clipboard): poll that file and forward it. Instances on the new
+    // image never write the file, so this is a no-op for them. Remove once all
+    // instances are recreated onto the new image.
     let lastClip = '';
     const clipPoll = setInterval(async () => {
       if (socket.readyState !== 1) return;
       try {
         const raw = await execInContainer(id, 'cat /tmp/.tmux-clipboard 2>/dev/null');
-        // Strip dockerode stream frame headers (bytes 0x00-0x08) but keep newlines/tabs
         const text = raw.replace(/[\x00-\x08\x0e-\x1f]/g, '').replace(/^\s+/, '').replace(/\s+$/, '');
         if (text && text !== lastClip) {
           lastClip = text;

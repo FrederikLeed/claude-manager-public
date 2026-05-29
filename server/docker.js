@@ -350,6 +350,11 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     ...env,
   ];
 
+  // Sync timezone from the manager (host) so logs/timestamps match the operator
+  if (process.env.TZ) {
+    containerEnv.push(`TZ=${process.env.TZ}`);
+  }
+
   // Set proxy env vars for non-unrestricted policies
   if (networkPolicy && networkPolicy !== 'unrestricted') {
     containerEnv.push(
@@ -672,7 +677,7 @@ export async function adoptContainer(dockerId, { name }) {
  * Preserves: image, env, labels, mounts, network, restart policy.
  * Returns the new container info.
  */
-export async function recreateInstance(id, { dockerSocket, networkPolicy } = {}) {
+export async function recreateInstance(id, { dockerSocket, networkPolicy, updateImage = false } = {}) {
   const container = await resolveContainer(id);
   const inspect = await container.inspect();
 
@@ -681,6 +686,13 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy } = {})
   const oldConfig = inspect.Config || {};
   const oldHostConfig = inspect.HostConfig || {};
   const oldLabels = oldConfig.Labels || {};
+
+  // Optionally move the instance onto the latest workspace image (Update Claude).
+  // The workspace volume and all other binds are preserved, so data is retained.
+  const newImage = updateImage ? config.CLAUDE_IMAGE : oldConfig.Image;
+  if (updateImage && newImage !== oldConfig.Image) {
+    await ensureImage(newImage);
+  }
 
   // Resolve current values — use new if provided, else keep old
   const newDockerSocket = dockerSocket ?? hasDockerSocket(inspect.Mounts);
@@ -698,9 +710,12 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy } = {})
   // Update env vars: remove old proxy/policy vars, add new ones
   const proxyUrl = config.PROXY_URL || 'http://cm-proxy:3128';
   const proxyVarPrefixes = ['HTTP_PROXY=', 'HTTPS_PROXY=', 'http_proxy=', 'https_proxy=',
-    'NO_PROXY=', 'no_proxy=', 'GLOBAL_AGENT_', 'NETWORK_POLICY=', 'CM_NETWORK_POLICY='];
+    'NO_PROXY=', 'no_proxy=', 'GLOBAL_AGENT_', 'NETWORK_POLICY=', 'CM_NETWORK_POLICY=',
+    // Refresh TZ from the manager on every recreate
+    'TZ='];
   const newEnv = (oldConfig.Env || []).filter((e) => !proxyVarPrefixes.some(p => e.startsWith(p)));
   newEnv.push(`CM_NETWORK_POLICY=${newNetworkPolicy}`);
+  if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
 
   if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
     newEnv.push(
@@ -736,7 +751,7 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy } = {})
 
   const newContainer = await docker.createContainer({
     name: oldName,
-    Image: oldConfig.Image,
+    Image: newImage,
     Env: newEnv,
     Labels: newLabels,
     Tty: oldConfig.Tty ?? true,

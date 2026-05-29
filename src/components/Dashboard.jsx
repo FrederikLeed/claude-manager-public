@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useInstances } from '../hooks/useInstances.js';
-import { fetchSystemInfo, discoverContainers, adoptContainer, uploadFile } from '../api.js';
+import { fetchSystemInfo, discoverContainers, adoptContainer, uploadFile, fetchWorkspaceImage, rebuildWorkspaceImage } from '../api.js';
 import InstanceCard from './InstanceCard.jsx';
 import InstanceRow from './InstanceRow.jsx';
 import NewInstanceModal from './NewInstanceModal.jsx';
 import TerminalPanel from './Terminal.jsx';
 import ActivityLog from './ActivityLog.jsx';
 import ToastContainer, { showToast } from './Toast.jsx';
+import {
+  notificationsEnabled, enableNotifications, disableNotifications,
+  desktopNotify, playChime,
+} from '../lib/notify.js';
 import DeviceManager from './DeviceManager.jsx';
 import PolicyPreview from './PolicyPreview.jsx';
 import GrantActions from './GrantActions.jsx';
@@ -16,7 +20,65 @@ import AccessRequests from './AccessRequests.jsx';
 let tabCounter = 0;
 
 export default function Dashboard({ isAdmin, deviceId }) {
-  const { instances, loading, error, create, start, stop, remove, recreate, refresh } = useInstances();
+  const [notifyOn, setNotifyOn] = useState(() => notificationsEnabled());
+
+  // Raise toast + desktop notification + chime when an instance reports that
+  // Claude finished a turn or needs attention (via the in-container hook).
+  const handleNotify = useCallback((evt) => {
+    if (!notificationsEnabled()) return;
+    const name = evt.name || 'instance';
+    if (evt.event === 'Notification') {
+      const body = evt.message || 'Claude needs your attention';
+      showToast(`${name}: ${body}`, 'info');
+      desktopNotify(`${name} — needs attention`, body, name);
+    } else {
+      const body = evt.message || 'Claude finished responding';
+      showToast(`${name}: finished`, 'success');
+      desktopNotify(`${name} — Claude finished`, body, name);
+    }
+    playChime();
+  }, []);
+
+  const toggleNotify = useCallback(async () => {
+    if (notificationsEnabled()) {
+      disableNotifications();
+      setNotifyOn(false);
+    } else {
+      await enableNotifications();
+      setNotifyOn(true);
+      showToast('Notifications enabled', 'success');
+    }
+  }, []);
+
+  const [imageStatus, setImageStatus] = useState(null);
+  const { instances, loading, error, create, start, stop, remove, recreate, updateClaude, refresh } =
+    useInstances({ onNotify: handleNotify, onImageStatus: setImageStatus });
+
+  useEffect(() => {
+    fetchWorkspaceImage().then(setImageStatus).catch(() => {});
+  }, []);
+
+  const handleRebuildImage = useCallback(async () => {
+    if (!window.confirm('Rebuild the workspace image to the latest Claude Code? Running instances are unaffected until you update them individually.')) return;
+    try {
+      const status = await rebuildWorkspaceImage();
+      setImageStatus(status);
+      showToast('Rebuilding workspace image…', 'info');
+    } catch (err) {
+      showToast(err.message || 'Rebuild failed', 'error');
+    }
+  }, []);
+
+  const wrappedUpdateClaude = useCallback(async (id) => {
+    try {
+      await updateClaude(id);
+      bumpActivity();
+      showToast('Instance updated to latest Claude', 'success');
+    } catch (err) {
+      showToast(err.message || 'Update failed', 'error');
+      throw err;
+    }
+  }, [updateClaude]);
   const [showNewModal, setShowNewModal] = useState(false);
   const [systemInfo, setSystemInfo] = useState(null);
   const [systemOnline, setSystemOnline] = useState(false);
@@ -211,6 +273,43 @@ export default function Dashboard({ isAdmin, deviceId }) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {imageStatus?.currentVersion && (
+              <span
+                className={`text-[11px] rounded px-2 py-1 hidden sm:inline-flex items-center gap-1.5 border ${
+                  imageStatus.building
+                    ? 'text-blue-300 border-blue-800 bg-blue-900/20'
+                    : imageStatus.updateAvailable
+                      ? 'text-amber-300 border-amber-800 bg-amber-900/20'
+                      : 'text-gray-400 border-gray-700'
+                }`}
+                title={imageStatus.building
+                  ? 'Rebuilding workspace image…'
+                  : imageStatus.updateAvailable
+                    ? `New Claude Code ${imageStatus.latestVersion} available (image has ${imageStatus.currentVersion})`
+                    : `Workspace image on Claude Code ${imageStatus.currentVersion}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${imageStatus.building ? 'bg-blue-400 animate-pulse' : imageStatus.updateAvailable ? 'bg-amber-400' : 'bg-green-500'}`} />
+                Claude {imageStatus.building ? 'building…' : imageStatus.currentVersion}
+                {isAdmin && imageStatus.canRebuild && !imageStatus.building && imageStatus.updateAvailable && (
+                  <button onClick={handleRebuildImage} className="ml-1 underline hover:text-amber-200">Rebuild</button>
+                )}
+              </span>
+            )}
+            <button
+              onClick={toggleNotify}
+              className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
+                notifyOn
+                  ? 'bg-blue-900/40 text-blue-300 hover:bg-blue-900/60'
+                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'
+              }`}
+              title={notifyOn ? 'Notifications on — click to mute' : 'Notifications off — click to enable desktop + sound alerts'}
+            >
+              {notifyOn ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16a2 2 0 002-2H6a2 2 0 002 2zm6-4V8a6 6 0 00-4-5.66V2a2 2 0 10-4 0v.34A6 6 0 002 8v4l-1.5 1.5V14h15v-.5L14 12z"/></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M11.5 6.5A3.5 3.5 0 008 3a3.5 3.5 0 00-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4zM6.5 13a1.6 1.6 0 003 0" strokeLinecap="round" strokeLinejoin="round"/><path d="M1.5 1.5l13 13" strokeLinecap="round"/></svg>
+              )}
+            </button>
             {isAdmin && (
               <button
                 onClick={() => setShowDevices(true)}
@@ -350,6 +449,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     onTerminal={handleTerminal}
                     onRemove={wrappedRemove}
                     onRecreate={wrappedRecreate}
+                    onUpdateClaude={wrappedUpdateClaude}
                     onAdopt={handleAdopt}
                     adopting={!item._managed && adopting.has(item.dockerId)}
                     onPolicyClick={setPolicyPreview}
@@ -370,6 +470,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     onTerminal={handleTerminal}
                     onRemove={wrappedRemove}
                     onRecreate={wrappedRecreate}
+                    onUpdateClaude={wrappedUpdateClaude}
                     onAdopt={handleAdopt}
                     adopting={!item._managed && adopting.has(item.dockerId)}
                     onPolicyClick={setPolicyPreview}

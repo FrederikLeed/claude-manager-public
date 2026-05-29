@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/cm-notify", "timeout": 15 }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/cm-notify", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import StatusBadge from './StatusBadge.jsx';
 import GrantBadge from './GrantBadge.jsx';
 import { AccessRequestBadge } from './AccessRequests.jsx';
+import { formatTokens } from '../lib/notify.js';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -11,11 +12,18 @@ function timeAgo(unixTimestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting, onPolicyClick, onGrantClick }) {
+export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onUpdateClaude, onAdopt, adopting, onPolicyClick, onGrantClick }) {
   const [stopping, setStopping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [recreating, setRecreating] = useState(false);
-  const busy = stopping || removing || recreating;
+  const [updating, setUpdating] = useState(false);
+  const busy = stopping || removing || recreating || updating;
+
+  const handleUpdateClaude = async () => {
+    if (!window.confirm('Recreate this instance on the latest Claude Code? Your workspace data is retained.')) return;
+    setUpdating(true);
+    try { await onUpdateClaude(instance.id); } finally { setUpdating(false); }
+  };
   const isRunning = instance.state === 'running';
   const isStopped = instance.state === 'exited' || instance.state === 'created';
 
@@ -98,6 +106,14 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
                 onClick={() => onGrantClick?.(instance.id)}
               />
             ))}
+            {instance.usage?.contextTokens > 0 && (
+              <span
+                className="text-[10px] rounded px-1 py-0.5 shrink-0 hidden md:inline-flex items-center gap-1 text-emerald-400 border border-emerald-900"
+                title={`Context: ${instance.usage.contextTokens.toLocaleString()} tokens${instance.usage.model ? ` · ${instance.usage.model}` : ''}`}
+              >
+                {formatTokens(instance.usage.contextTokens)} ctx
+              </span>
+            )}
             <AccessRequestBadge count={instance.pendingRequests} />
           </>
         )}
@@ -121,6 +137,16 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
         <div className="flex items-center gap-1 shrink-0">
           {managed ? (
             <>
+              {(instance.updateAvailable || !instance.claudeVersion) && (
+                <button
+                  onClick={handleUpdateClaude}
+                  disabled={busy}
+                  className="px-2 py-1.5 bg-amber-900/30 border border-amber-800 text-amber-300 hover:bg-amber-900/50 disabled:opacity-50 text-xs font-medium rounded transition-colors"
+                  title={`Update Claude Code${instance.claudeVersion ? ` from ${instance.claudeVersion}` : ' (version unknown)'} — recreates the container, keeps data`}
+                >
+                  {updating ? '…' : '↑ Update'}
+                </button>
+              )}
               {isRunning && (
                 <>
                   <button

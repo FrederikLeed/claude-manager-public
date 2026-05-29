@@ -84,7 +84,7 @@ Without a GPU you have three options:
 | `cm-proxy`                     | ~50 MB | squid is tiny                               |
 | `cm-litellm`                   | ~512 MB| Python proxy                                |
 | `cm-litellm-db`                | ~256 MB| Idle PostgreSQL                             |
-| `cm-ollama` (Qwen3 30B-A3B)    | 24 GB VRAM + 4 GB RAM | NVIDIA GPU with ≥24 GB VRAM        |
+| `cm-ollama` (Qwen3 30B-A3B)    | 24 GB VRAM + 4 GB RAM | RTX 3090+ class GPU (≥24 GB VRAM) |
 | Each workspace instance        | ~2 GB  | Depends on workload                         |
 
 A host with 32 GB RAM + an NVIDIA GPU (≥24 GB VRAM) comfortably runs the full stack
@@ -110,29 +110,24 @@ separate repo to clone — see step 2 below.
 
 ```bash
 git clone https://github.com/FrederikLeed/claude-manager-public.git
-cd claude-manager-public
+cd claude-manager
 
 # 1. Configure host paths and secrets
 cp .env.example .env
 # edit .env — at minimum set INSTANCE_SHARED_DIR, INSTANCE_CLAUDE_DIR,
-# INSTANCE_MEMORY_BASE_DIR to ABSOLUTE host paths and pick a
-# LITELLM_MASTER_KEY (any random string)
+# INSTANCE_MEMORY_BASE_DIR to ABSOLUTE host paths
 
 # 2. Build all images (manager, workspace, proxy, litellm)
-docker compose --profile build-only build
+docker compose -f docker-compose.yml --profile build-only build
 
 # 3. Start the stack
-docker compose up -d
+docker compose -f docker-compose.yml up -d
 
 # 4. Verify
-docker compose ps
+docker compose -f docker-compose.yml ps
 ```
 
-No NVIDIA GPU? Comment out the `cm-ollama` service in `docker-compose.yml`.
-The `local-llm` backend won't work, but `claude-max` and the `foundry*`
-backends (Azure AI Foundry) work fine without local inference.
-
-Open **http://localhost:3002**. The first browser to load it is
+Open **http://localhost:3000**. The first browser to load it is
 auto-approved as the admin device (see
 [operations.md → Device Authentication](operations.md#9-multi-device-access-and-device-authentication)).
 
@@ -166,7 +161,7 @@ On first start the manager:
 | `INSTANCE_MEMORY_DIR` | *(unset)* | Legacy single-shared project memory; leave empty when using the base dir |
 | `ADMIN_RESET_TOKEN` | *(unset)* | Emergency admin promotion via `?reset_token=…` |
 | `DEFAULT_NETWORK_POLICY` | `unrestricted` | Pre-selected policy in the create modal |
-| `POLICIES_HOST_DIR` | *(unset)* | Optional override — host path to a policy directory. Default behaviour reads `/app/policies/` (baked into the image from `policies/`). |
+| `POLICIES_HOST_DIR` | *(unset)* | Host path of `workspace/policies/` (overrides volume) |
 | `POLICIES_VOLUME` | `cm-policies` | Alternative for DinD setups |
 | `POLICIES_DIR` | `/app/policies` | Where the manager reads policy YAML inside its own container |
 | `PROXY_URL` | `http://cm-proxy:3128` | Proxy URL injected into restricted instances |
@@ -238,16 +233,10 @@ Two knobs control the out-of-the-box defaults:
 - `LITELLM_DEFAULT_BUDGET=20` — each `local-llm` / `foundry*` instance
   gets a $20 LiteLLM budget.
 
-The four policy YAMLs live in `policies/` at the repo root and are
-**baked into the manager image at build time** (`COPY policies/
-./policies/` in the Dockerfile, manager reads `/app/policies`). The
-same set is kept under `workspace/policies/` for symmetry, so anything
-inside a workspace container can also reference policy YAML by path
-rather than only through `/api/policies`. To add a custom policy:
-
-1. Drop a YAML file in `policies/`.
-2. Copy it to `workspace/policies/` to keep the two copies in sync.
-3. Rebuild the manager image (`docker compose --profile build-only build claude-manager`).
+The four policy YAMLs live in `workspace/policies/`. To add a custom
+policy, drop a YAML file there (same schema as the existing ones) and
+restart the manager — `listPolicies()` reads the directory on each
+call.
 
 ### Restart policy
 
@@ -255,7 +244,7 @@ All services use `restart: unless-stopped`. After host reboots the
 stack comes back automatically. To stop the whole stack:
 
 ```bash
-docker compose stop
+docker compose -f docker-compose.yml stop
 ```
 
 ---
@@ -328,10 +317,10 @@ Traefik passes WebSocket upgrades automatically.
 ## 5. Updating
 
 ```bash
-cd claude-manager-public
+cd claude-manager
 git pull
-docker compose --profile build-only build
-docker compose up -d
+docker compose -f docker-compose.yml --profile build-only build
+docker compose -f docker-compose.yml up -d
 ```
 
 Database migrations run automatically — `CREATE TABLE IF NOT EXISTS` +
@@ -361,10 +350,10 @@ The startup snapshot is the easy story. For an on-demand backup:
 
 ```bash
 # Option A — stop and copy (safest)
-docker compose stop claude-manager
+docker compose -f docker-compose.yml stop claude-manager
 cp "$(docker volume inspect claude-manager-data --format '{{.Mountpoint}}')/manager.db" \
    ~/backups/claude-manager-$(date +%Y%m%d).db
-docker compose start claude-manager
+docker compose -f docker-compose.yml start claude-manager
 
 # Option B — online (.backup, WAL-safe)
 docker exec claude-manager sh -c \
@@ -378,11 +367,12 @@ docker exec claude-manager rm /data/manager-backup.db
 
 To restore on a new host:
 
-1. Clone the repo (this brings back `data/`, `policies/`, compose files, etc).
+1. Clone the repo (this brings back `data/`, `workspace/policies/`,
+   compose files, etc).
 2. `cp .env.example .env` and set `INSTANCE_*_DIR` to the new absolute
    host paths.
-3. `docker compose --profile build-only build`
-4. `docker compose up -d`
+3. `docker compose -f docker-compose.yml --profile build-only build`
+4. `docker compose -f docker-compose.yml up -d`
 5. From the new admin device, set `ADMIN_RESET_TOKEN` in `.env`,
    restart, register with `?reset_token=…`, then clear the env var.
 6. Each instance re-authenticates (`claude login`, `gh auth login`) on
@@ -422,13 +412,13 @@ Failed to pull image "claude-workspace:latest": ...
 ```bash
 docker images | grep claude-workspace
 # If missing:
-docker compose --profile build-only build claude-workspace
+docker compose -f docker-compose.yml --profile build-only build claude-workspace
 ```
 
 ### `cm-ollama` exits / no GPU
 
 ```bash
-docker compose logs cm-ollama
+docker compose -f docker-compose.yml logs cm-ollama
 ```
 
 Likely causes:
@@ -446,7 +436,7 @@ can mint virtual keys). Both pick up the same `.env` value via
 ### Restricted instance can't reach an allowed host
 
 1. `cm-access --status` inside the container to see effective access.
-2. Verify the host is in the policy YAML (`policies/<policy>.yaml`).
+2. Verify the host is in the policy YAML (`workspace/policies/<policy>.yaml`).
 3. Inspect the ACL file: `docker exec cm-proxy cat /etc/squid/acl/<id>.acl`.
 4. Check the proxy log: `docker logs cm-proxy --tail 50`.
 5. Make sure the agent isn't bypassing `HTTPS_PROXY` — the iptables
@@ -469,7 +459,7 @@ If `SHARED_DIR` wasn't set, Docker may have created `/shared` as a
 root-owned host directory. Set it in `.env`, recreate the manager:
 
 ```bash
-docker compose up -d --force-recreate claude-manager
+docker compose -f docker-compose.yml up -d --force-recreate claude-manager
 ```
 
 ---

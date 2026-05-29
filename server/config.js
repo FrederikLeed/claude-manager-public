@@ -4,6 +4,12 @@ export const config = Object.freeze({
   DATA_DIR: process.env.DATA_DIR || '/data',
   CLAUDE_IMAGE: process.env.CLAUDE_IMAGE || 'claude-workspace:latest',
   CLAUDE_NETWORK: process.env.CLAUDE_NETWORK || 'claude-manager-net',
+  // Workspace image build context, bind-mounted into the manager so it can
+  // rebuild claude-workspace via the Docker API to pick up the latest Claude Code.
+  // Empty disables manager-side rebuilds (build the image with compose instead).
+  WORKSPACE_SRC_DIR: process.env.WORKSPACE_SRC_DIR || '',
+  // How often to check npm for a newer Claude Code and rebuild (hours, 0 = off)
+  IMAGE_UPDATE_INTERVAL_HOURS: parseInt(process.env.IMAGE_UPDATE_INTERVAL_HOURS || '24', 10),
   INSTANCE_LABEL: process.env.INSTANCE_LABEL || 'claude-manager.managed=true',
   HOST_CLAUDE_DIR: process.env.HOST_CLAUDE_DIR || '/host-claude',
   MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '20', 10),

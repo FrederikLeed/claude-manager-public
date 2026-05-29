@@ -98,6 +98,20 @@ export function recreateInstance(id, opts) {
   });
 }
 
+export function updateClaude(id) {
+  return request(`/api/instances/${id}/update-claude`, { method: 'POST' });
+}
+
+// --- Workspace image (Claude Code version) ---
+
+export function fetchWorkspaceImage() {
+  return request('/api/workspace-image');
+}
+
+export function rebuildWorkspaceImage() {
+  return request('/api/workspace-image/rebuild', { method: 'POST' });
+}
+
 // --- Policies ---
 
 export function fetchPolicies() {

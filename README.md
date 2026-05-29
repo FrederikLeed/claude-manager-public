@@ -43,9 +43,21 @@ Everything Claude Manager gives the operator, on one page.
 - tmux sessions shared across devices — desktop + mobile see the same shell
 - Tabbed panel with Windows Terminal-style tab management; reconnect without losing state
 
+**Notifications & usage tracking**
+- Each container reports Claude Code lifecycle events to the manager via a baked-in `Stop`/`Notification` hook (`cm-notify`)
+- Dashboard raises a desktop notification, in-app toast, and chime when Claude finishes a turn or needs attention — toggle with the bell in the header
+- Live per-instance **context / token usage** badge, attributed reliably by the container's own ID (works even though instances share one transcript directory)
+
+**Always-latest Claude Code**
+- The manager checks npm daily and rebuilds the workspace image (over the Docker API) whenever a newer Claude Code is published, so **new instances always launch on the latest** — plus a manual "Rebuild" button in the header
+- Running instances are left untouched; the header shows the current version and any update, and a per-instance **"Update Claude"** button recreates that instance onto the latest image **while retaining its workspace data**
+
 **Capability grants**
 - Time-bound (default 24 h) grants for `docker_socket` and `network_unrestricted`
 - Expired grants auto-stop the container; UI offers renew or recreate-without
+
+**Timezone sync**
+- The manager propagates its `TZ` into every instance it creates/recreates, so in-container logs and timestamps match the operator's wall clock
 
 **Data architecture**
 - Per-instance project memory isolated at `/workspace/.claude`
@@ -85,7 +97,7 @@ Six containers, one bridge network. The manager creates and tears down workspace
 | `claude-manager` | `Dockerfile` | Fastify 5 backend + React 19 frontend |
 | `cm-proxy` | `proxy/Dockerfile` | squid forward proxy — per-container network ACLs |
 | `cm-litellm` | `litellm/Dockerfile` | LiteLLM proxy — Claude API → Ollama / Azure |
-| `cm-ollama` | `ollama/ollama` | Qwen3 30B-A3B on NVIDIA GPU |
+| `cm-ollama` | `ollama/ollama` | Qwen3 30B-A3B — CPU by default; GPU via the opt-in [`docker-compose.gpu.yml`](docker-compose.gpu.yml) overlay |
 | `cm-litellm-db` | `postgres:16` | PostgreSQL for LiteLLM virtual-key state |
 | `cm-instance-*` | `workspace/Dockerfile` | Per-project workspace containers |
 
@@ -240,12 +252,20 @@ Connect to the same tmux session from multiple devices — desktop and mobile se
 
 ```bash
 git clone https://github.com/FrederikLeed/claude-manager-public.git && cd claude-manager-public
-cp .env.example .env                               # set absolute host paths + LiteLLM keys
+cp .env.example .env                               # set absolute host paths, TZ + LiteLLM keys
 docker compose --profile build-only build           # build all images
 docker compose up -d                                # start the stack
 ```
 
-Open [http://localhost:3002](http://localhost:3002) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
+Open [http://localhost:3000](http://localhost:3000) — the first browser to load it becomes the admin device. See [`.env.example`](.env.example) for all options and [docs/deployment.md](docs/deployment.md) for the full deployment guide.
+
+**GPU acceleration (local-llm).** The base stack runs Ollama on CPU so it starts on any host. On a machine with an NVIDIA GPU + the Container Toolkit, layer the GPU overlay so `cm-ollama` claims the GPU:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# or make it the default for this directory:
+export COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+```
 
 ### Docker Build
 
@@ -262,7 +282,7 @@ docker compose up -d                        # start the stack
 | Backend | Fastify 5, dockerode, better-sqlite3 |
 | Frontend | React 19, Vite, Tailwind CSS 3 |
 | Terminal | xterm.js v6 (@xterm/xterm), tmux |
-| Workspace | Ubuntu 24.04, Node.js 22, Claude Code, gh CLI, cm-access |
+| Workspace | Ubuntu 24.04, Node.js 22, Claude Code, gh CLI, cm-access, cm-notify hook |
 | Network | squid forward proxy + iptables lock |
 | LLM stack | LiteLLM proxy + Ollama (Qwen3) + Azure AI Foundry |
 | Deployment | Docker multi-stage build, Docker Compose v2 |
@@ -276,7 +296,7 @@ docker compose up -d                        # start the stack
 - `tests/` — integration test suite (Docker-backed)
 - `proxy/` — `cm-proxy` image (squid + inotify watcher)
 - `litellm/` — `cm-litellm` image (LiteLLM + `config.yaml`)
-- `workspace/` — workspace Docker image source (Ubuntu 24.04 + Claude Code + `cm-access`)
+- `workspace/` — workspace Docker image source (Ubuntu 24.04 + Claude Code + `cm-access` + `cm-notify` hook + managed-settings)
 - `data/` — runtime config, global memory, per-instance memory (git-tracked)
 - `docs/` — architecture docs, deployment guide, diagrams
 

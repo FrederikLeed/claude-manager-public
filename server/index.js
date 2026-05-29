@@ -20,8 +20,10 @@ import grantRoutes from './routes/grants.js';
 import litellmRoutes from './routes/litellm.js';
 import policyRoutes from './routes/policies.js';
 import accessRequestRoutes from './routes/access-requests.js';
+import workspaceImageRoutes from './routes/workspace-image.js';
 import { checkExpiredGrants } from './grants.js';
 import { syncAllACLs } from './proxy.js';
+import { initImageState, checkAndMaybeRebuild } from './workspace-image.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,15 +83,28 @@ async function start() {
   await fastify.register(litellmRoutes);
   await fastify.register(policyRoutes);
   await fastify.register(accessRequestRoutes);
+  await fastify.register(workspaceImageRoutes);
+
+  // Let the workspace-image module push build status over the same WS channel
+  fastify.wireImageBroadcaster?.(fastify.accessRequestBroadcast);
 
   // Start grant expiry checker (every 60s)
   const grantCheckInterval = setInterval(() => {
     checkExpiredGrants(null, fastify.log);
   }, 60_000);
 
+  // Keep the workspace image current with the latest Claude Code
+  let imageUpdateInterval = null;
+  if (config.IMAGE_UPDATE_INTERVAL_HOURS > 0 && config.WORKSPACE_SRC_DIR) {
+    imageUpdateInterval = setInterval(() => {
+      checkAndMaybeRebuild(fastify.log);
+    }, config.IMAGE_UPDATE_INTERVAL_HOURS * 3_600_000);
+  }
+
   // Graceful shutdown — close terminal sessions, event stream, grant timer, DB
   fastify.addHook('onClose', () => {
     clearInterval(grantCheckInterval);
+    if (imageUpdateInterval) clearInterval(imageUpdateInterval);
     const sessionCount = getActiveSessionCount();
     if (sessionCount > 0) {
       fastify.log.info(`Closing ${sessionCount} active terminal sessions...`);
@@ -117,6 +132,13 @@ async function start() {
     // Sync proxy ACLs for all running containers
     await syncAllACLs();
     fastify.log.info('Proxy ACLs synced');
+
+    // Determine current/latest Claude Code version, then run a catch-up check
+    // (rebuilds in the background only if npm has a newer version).
+    await initImageState(fastify.log);
+    if (config.WORKSPACE_SRC_DIR) {
+      checkAndMaybeRebuild(fastify.log);
+    }
   } catch (err) {
     fastify.log.error({ err }, 'Startup initialization failed');
     // Continue anyway — Docker may not be available in dev without socket

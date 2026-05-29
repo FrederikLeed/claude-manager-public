@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import TerminalTab from './TerminalTab.jsx';
+import { getTerminal } from '../lib/terminalBus.js';
 
 const MIN_HEIGHT = 120;
 const TAB_BAR_HEIGHT = 36;
@@ -7,6 +8,40 @@ const MOBILE_BREAKPOINT = 768;
 
 function isMobile() {
   return window.innerWidth < MOBILE_BREAKPOINT;
+}
+
+// On-screen control keys for mobile — phones lack Esc/Ctrl/Tab/arrows that
+// Claude Code (and shells/editors) need constantly.
+const MOBILE_KEYS = [
+  ['Esc', '\x1b'],
+  ['Tab', '\t'],
+  ['Ctrl-C', '\x03'],
+  ['←', '\x1b[D'],
+  ['↑', '\x1b[A'],
+  ['↓', '\x1b[B'],
+  ['→', '\x1b[C'],
+];
+
+function MobileKeyBar({ instanceId }) {
+  // pointerdown + preventDefault keeps focus on the terminal so the soft
+  // keyboard stays open while sending the control sequence.
+  const press = (seq) => (e) => {
+    e.preventDefault();
+    getTerminal(instanceId)?.send(seq);
+  };
+  return (
+    <div className="shrink-0 flex items-center gap-1 px-1 py-1 bg-gray-900 border-t border-gray-800 overflow-x-auto no-scrollbar">
+      {MOBILE_KEYS.map(([label, seq]) => (
+        <button
+          key={label}
+          onPointerDown={press(seq)}
+          className="px-3 py-2 min-w-[44px] text-xs font-medium text-gray-200 bg-gray-800 rounded active:bg-gray-600 shrink-0"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -248,6 +283,11 @@ export default function TerminalPanel({ tabs, activeTabId, onActivate, onClose, 
             />
           ))}
         </div>
+      )}
+
+      {/* Mobile control-key bar — sits just above the soft keyboard */}
+      {mobile && !minimized && activeTabId && (
+        <MobileKeyBar instanceId={tabs.find((t) => t.id === activeTabId)?.instanceId} />
       )}
     </div>
   );

@@ -1,0 +1,75 @@
+#!/bin/bash
+# cm-notify — Claude Code Stop/Notification hook for managed workspace containers.
+#
+# Registered via /etc/claude-code/managed-settings.json. Claude Code pipes the
+# hook payload as JSON on stdin. This script reports the lifecycle event plus the
+# current token/context usage to Claude Manager so the dashboard can raise a
+# desktop/toast notification and show a live usage badge for this instance.
+#
+# Attribution is by CM_INSTANCE_ID (this container's own env) — reliable even
+# though all instances share one ~/.claude/projects transcript directory.
+#
+# Never blocks Claude: short curl timeout, all failures swallowed, always exit 0.
+set -uo pipefail
+
+MANAGER="${CM_MANAGER_URL:-}"
+INSTANCE="${CM_INSTANCE_ID:-}"
+
+# Not a managed container (e.g. legacy/adopted) — nothing to report.
+[ -n "$MANAGER" ] && [ -n "$INSTANCE" ] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+INPUT="$(cat 2>/dev/null || true)"
+[ -n "$INPUT" ] || exit 0
+
+EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "Stop"' 2>/dev/null)"
+TRANSCRIPT="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+# Stop carries last_assistant_message; Notification carries message — use either.
+MSG="$(printf '%s' "$INPUT" | jq -r '.message // .last_assistant_message // ""' 2>/dev/null)"
+MSG="$(printf '%s' "$MSG" | tr '\n' ' ' | head -c 200)"
+
+CONTEXT=0
+OUT=0
+MODEL=""
+
+# Read only the tail — the last main-chain assistant message (and its model) is
+# near the end, and this keeps the hook O(tail) instead of O(whole transcript).
+if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  TAIL="$(tail -n 200 "$TRANSCRIPT" 2>/dev/null || true)"
+  if [ -n "$TAIL" ]; then
+    CONTEXT="$(printf '%s\n' "$TAIL" | jq -s '
+      [ .[] | select(.type=="assistant" and ((.isSidechain // false) | not) and (.message.usage != null)) ]
+      | (last // {})
+      | ((.message.usage.input_tokens // 0)
+         + (.message.usage.cache_read_input_tokens // 0)
+         + (.message.usage.cache_creation_input_tokens // 0))
+    ' 2>/dev/null)"
+    OUT="$(printf '%s\n' "$TAIL" | jq -s '
+      [ .[] | select(.type=="assistant" and ((.isSidechain // false) | not) and (.message.usage != null)) ]
+      | (last // {}) | (.message.usage.output_tokens // 0)
+    ' 2>/dev/null)"
+    MODEL="$(printf '%s\n' "$TAIL" | jq -rs '
+      [ .[] | select(.type=="assistant") | .message.model // empty ] | last // ""
+    ' 2>/dev/null)"
+  fi
+fi
+
+# Normalise — jq can emit empty/null on odd input.
+case "$CONTEXT" in ''|null) CONTEXT=0 ;; esac
+case "$OUT" in ''|null) OUT=0 ;; esac
+[ "$MODEL" = "null" ] && MODEL=""
+
+BODY="$(jq -nc \
+  --arg event "$EVENT" \
+  --argjson ctx "$CONTEXT" \
+  --argjson out "$OUT" \
+  --arg model "$MODEL" \
+  --arg message "$MSG" \
+  '{event:$event, contextTokens:$ctx, outputTokens:$out, model:$model, message:$message}' 2>/dev/null)"
+[ -n "$BODY" ] || exit 0
+
+curl -sf -m 5 -X POST "${MANAGER}/api/instances/${INSTANCE}/event" \
+  -H "Content-Type: application/json" \
+  -d "$BODY" >/dev/null 2>&1 || true
+
+exit 0

@@ -1,5 +1,5 @@
 model_list:
-  # Local Ollama models
+  # Local Ollama models (3090 GPU)
   - model_name: qwen3-30b-a3b
     litellm_params:
       model: ollama_chat/qwen3:30b-a3b
@@ -7,16 +7,16 @@ model_list:
       num_ctx: 8192
       num_batch: 1024
 
-  # Azure AI Foundry models (update deployment names to match your Azure setup)
+  # Azure AI Foundry models
   - model_name: gpt-4.1-mini
     litellm_params:
-      model: openai/gpt-4.1-mini-1  # your Azure deployment name
+      model: openai/gpt-4.1-mini-1
       api_key: os.environ/AZURE_AI_API_KEY
       api_base: os.environ/AZURE_AI_API_BASE
 
   - model_name: gpt-chat-latest
     litellm_params:
-      model: openai/gpt-chat-latest  # your Azure deployment name
+      model: openai/gpt-chat-latest
       api_key: os.environ/GPTLATEST_AZURE_AI_API_KEY
       api_base: os.environ/AZURE_AI_API_BASE
 

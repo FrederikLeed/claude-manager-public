@@ -4,7 +4,8 @@ services:
     container_name: claude-manager
     restart: unless-stopped
     ports:
-      - "3002:3002"
+      # Host 3000 → manager 3002 (internal port stays 3002 for CM_MANAGER_URL)
+      - "3000:3002"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - claude-manager-data:/data
@@ -13,8 +14,14 @@ services:
       - ${CLAUDE_HOME_DIR:-./data/claude-home}:/claude-home
       - ./workspace/policies:/policies:ro
       - proxy-acl:/proxy-acl
+      # Workspace image build context — lets the manager rebuild claude-workspace
+      # (via the Docker API) to keep instances on the latest Claude Code.
+      - ./workspace:/workspace-src:ro
     environment:
       - PORT=3002
+      - TZ=${TZ:-UTC}
+      - WORKSPACE_SRC_DIR=/workspace-src
+      - IMAGE_UPDATE_INTERVAL_HOURS=${IMAGE_UPDATE_INTERVAL_HOURS:-24}
       - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
       - CLAUDE_NETWORK=claude-manager-net
       - MAX_INSTANCES=${MAX_INSTANCES:-20}
@@ -77,13 +84,8 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=-1
       - OLLAMA_FLASH_ATTENTION=1
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # GPU access is opt-in via the docker-compose.gpu.yml overlay so the stack
+    # also starts on hosts without an NVIDIA GPU. See README "GPU acceleration".
     networks:
       - claude-manager-net
 

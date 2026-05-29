@@ -7,18 +7,12 @@ Includes the workspace Docker image source in workspace/.
 
 ## Key files to understand first
 - server/docker.js — all Docker Engine API interaction, instance creation with mount logic
-- server/proxy.js — per-container squid ACL generation
-- server/grants.js — time-bound capability grants (docker_socket, network_unrestricted)
-- server/litellm.js — per-instance virtual key lifecycle
-- server/routes/instances.js — REST API
-- server/routes/access-requests.js — agent ↔ admin access negotiation
+- server/routes/instances.js — REST API (incl. POST /:id/event, the auth-exempt endpoint the in-container hook posts to)
 - src/components/Dashboard.jsx — main UI entry point
+- src/lib/notify.js — desktop/toast/audio notifications + token formatting
 - workspace/Dockerfile — the Claude Code workspace image
-- workspace/scripts/cm-access — agent-side CLI for querying/requesting network access
-- workspace/scripts/entrypoint.sh — iptables lock applied when network policy is restricted
-- proxy/squid.conf + proxy/watch-acls.sh — forward-proxy enforcement
-- litellm/config.yaml — LiteLLM model routing (Claude name aliases, Azure)
-- policies/*.yaml — network policy YAML (baked into manager image at /app/policies)
+- workspace/scripts/cm-notify + workspace/config/managed-settings.json — Stop/Notification hook that reports lifecycle events + token usage to the manager
+- server/workspace-image.js — rebuilds claude-workspace over the Docker API to track latest Claude Code (daily check + manual). Needs ./workspace mounted as /workspace-src (WORKSPACE_SRC_DIR).
 
 ## Data architecture
 - data/shared/ — files shared across all instances (/shared mount)
@@ -46,11 +40,10 @@ Instance metadata (human name, tags, notes) stored in SQLite at /data/manager.db
 The workspace image is built from workspace/Dockerfile in this repo.
 
 ## Naming conventions
-- Docker container names: cm-instance-{slug}-{id}  (CONTAINER_PREFIX in shared/constants.js)
-- Docker volumes:         cm-workspace-{slug}-{id} (VOLUME_PREFIX)
-- Docker network:         claude-manager-net
-- Instance memory dirs:   data/instance-memory/{slug}/
-- Sidecars:               cm-proxy, cm-litellm, cm-ollama, cm-litellm-db
+- Docker container names: cm-{slug}-{id}
+- Docker volumes: cmv-{slug}-{id}
+- Docker network: claude-manager-net
+- Instance memory dirs: data/instance-memory/{slug}/
 
 ## Do not
 - Do not use docker-compose CLI from within the container (no CLI in image)

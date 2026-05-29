@@ -7,7 +7,7 @@ digraph G {
     ranksep=0.6
     fontname="Helvetica"
     labelloc=t
-    label=<<B>Claude Manager — Data Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Git-tracked config &amp; memory · Per-instance isolation · Per-instance auth · Per-container ACL files</FONT>>
+    label=<<B>Claude Manager v2 — Data Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Git-tracked config &amp; memory · Per-instance isolation · Per-instance auth · Per-container ACL files</FONT>>
     fontsize=18
     bgcolor="#FAFAFA"
   ]
@@ -54,7 +54,7 @@ digraph G {
       label=<<B>Docker volumes (not git-tracked)</B>>; labeljust=l
       style="rounded,filled,dashed"; fillcolor="#E8F5E9"; color="#2E7D32"
       vol_ws    [label="cm-workspace-{slug}-{id}\n(one per instance)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
-      vol_mgr   [label="claude-manager-data\n(manager.db)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
+      vol_mgr   [label="claude-manager-v2-data\n(manager.db)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
       vol_acl   [label="proxy-acl\n(squid ACLs)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
       vol_ollama [label="ollama-data\n(model weights)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
       vol_pgdb  [label="litellm-db\n(virtual keys)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
@@ -72,7 +72,7 @@ digraph G {
   }
 
   subgraph cluster_mgr_view {
-    label=<<B>Inside manager: claude-manager</B>>; labeljust=l
+    label=<<B>Inside manager: claude-manager-v2</B>>; labeljust=l
     style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#1565C0"; fontsize=13; penwidth=2
     m_data    [label=<<B>/data</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">manager.db (SQLite)<BR ALIGN="LEFT"/>+ /data/backups/<BR ALIGN="LEFT"/></FONT>> fillcolor="#BBDEFB" color="#1565C0"]
     m_policies [label=<<B>/policies (RO)</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">YAML policy bundle<BR ALIGN="LEFT"/></FONT>> fillcolor="#FFCDD2" color="#C62828"]

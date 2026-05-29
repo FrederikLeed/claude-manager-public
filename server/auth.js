@@ -7,6 +7,8 @@ const AUTH_EXEMPT = ['/api/auth/register', '/api/auth/status', '/api/policies'];
 const AUTH_EXEMPT_PATTERNS = [
   /^\/api\/instances\/[^/]+\/request-access$/,
   /^\/api\/instances\/[^/]+\/access$/,
+  // Reported from inside a container by the Claude Code Stop/Notification hook
+  /^\/api\/instances\/[^/]+\/event$/,
 ];
 
 export function hashToken(token) {

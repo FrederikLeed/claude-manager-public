@@ -1,9 +1,10 @@
 # Claude Manager -- Roadmap
 
-> **Status as of 2026-05-23** — Phase 1 (MVP), much of Phase 2
+> **Status as of 2026-05-22** — Phase 1 (MVP), much of Phase 2
 > (observability), and the network-policy work originally planned as
-> Phase 3.5 are all shipped. Implementation differs slightly from what's
-> described below — the design notes are kept for context, but see
+> Phase 3.5 are all shipped (port 3002, `docker-compose.yml`).
+> Implementation differs slightly from what's described below — the
+> design notes are kept for context, but see
 > [architecture.md](architecture.md) and [brief.md](../brief.md) for
 > what actually ships.
 

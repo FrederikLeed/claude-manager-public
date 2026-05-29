@@ -1,0 +1,19 @@
+# GPU overlay — opt-in NVIDIA GPU access for the local Ollama backend.
+#
+# The base docker-compose.yml runs cm-ollama on CPU so the stack starts on any
+# host. Apply this overlay on machines with an NVIDIA GPU + nvidia-container-toolkit
+# to give Ollama the GPU (required for usable Local LLM performance):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Tip: export COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml to make it
+# the default for every `docker compose` command in this directory.
+services:
+  cm-ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

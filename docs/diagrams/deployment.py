@@ -18,7 +18,7 @@ node_attr = {"fontname": "Helvetica", "fontsize": "11"}
 edge_attr = {"fontname": "Helvetica", "fontsize": "9"}
 
 with Diagram(
-    "Claude Manager — Deployment",
+    "Claude Manager v2 — Deployment",
     filename="deployment",
     outformat="png",
     show=False,
@@ -33,14 +33,14 @@ with Diagram(
         docker = Docker("Docker Engine")
 
         with Cluster("Manager"):
-            manager = Server("claude-manager\nFastify 5 + React 19\n:3002")
+            manager = Server("claude-manager-v2\nFastify 5 + React 19\n:3002")
             db = Storage("manager.db\nSQLite + WAL")
             manager - db
 
         with Cluster("Sidecars"):
             proxy = Firewall("cm-proxy\nsquid forward proxy")
             litellm = Server("cm-litellm\nLiteLLM router\n:4000")
-            ollama = Rack("cm-ollama\nQwen3 30B-A3B\nLocal GPU")
+            ollama = Rack("cm-ollama\nQwen3 30B-A3B\nRTX 3090")
             pgdb = PostgreSQL("cm-litellm-db\nvirtual keys")
 
         with Cluster("Workspace instances (cm-instance-*)"):

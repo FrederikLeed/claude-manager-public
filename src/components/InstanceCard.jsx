@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import StatusBadge from './StatusBadge.jsx';
 import GrantBadge from './GrantBadge.jsx';
+import { formatTokens } from '../lib/notify.js';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -19,11 +20,18 @@ const borderColors = {
   dead: 'border-l-red-700',
 };
 
-export default function InstanceCard({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onAdopt, adopting, onPolicyClick, onGrantClick }) {
+export default function InstanceCard({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onUpdateClaude, onAdopt, adopting, onPolicyClick, onGrantClick }) {
   const [stopping, setStopping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [recreating, setRecreating] = useState(false);
-  const busy = stopping || removing || recreating;
+  const [updating, setUpdating] = useState(false);
+  const busy = stopping || removing || recreating || updating;
+
+  const handleUpdateClaude = async () => {
+    if (!window.confirm('Recreate this instance on the latest Claude Code? Your workspace data is retained.')) return;
+    setUpdating(true);
+    try { await onUpdateClaude(instance.id); } finally { setUpdating(false); }
+  };
   const isRunning = instance.state === 'running';
   const isStopped = instance.state === 'exited' || instance.state === 'created';
   const borderColor = borderColors[instance.state] || 'border-l-gray-600';
@@ -107,6 +115,21 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
         {instance.status && <span className="ml-2 text-gray-600">({instance.status})</span>}
       </div>
 
+      {/* Token / context usage — last reported by the in-container Claude hook */}
+      {instance.usage?.contextTokens > 0 && (
+        <div
+          className="flex items-center gap-1.5 text-[11px] text-gray-400"
+          title={`Context: ${instance.usage.contextTokens.toLocaleString()} tokens${instance.usage.model ? ` · ${instance.usage.model}` : ''}${instance.usage.updatedAt ? ` · updated ${instance.usage.updatedAt} UTC` : ''}`}
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="text-emerald-500 shrink-0"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zM7.5 4a.5.5 0 011 0v4l2.5 1.5a.5.5 0 01-.5.86L7.75 8.7A.5.5 0 017.5 8.3V4z"/></svg>
+          <span className="text-emerald-400 font-medium">{formatTokens(instance.usage.contextTokens)}</span>
+          <span className="text-gray-600">ctx</span>
+          {instance.usage.outputTokens > 0 && (
+            <span className="text-gray-600">· {formatTokens(instance.usage.outputTokens)} out</span>
+          )}
+        </div>
+      )}
+
       {/* Notes */}
       {instance.notes && (
         <p className="text-xs text-gray-400 line-clamp-2">{instance.notes}</p>
@@ -121,6 +144,19 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
             </span>
           ))}
         </div>
+      )}
+
+      {/* Update Claude — shown when the instance is behind the latest image,
+          or when its version is unknown (e.g. created before version tracking) */}
+      {managed && (instance.updateAvailable || !instance.claudeVersion) && (
+        <button
+          onClick={handleUpdateClaude}
+          disabled={busy}
+          className="text-xs px-3 py-2 rounded-md bg-amber-900/30 border border-amber-800 text-amber-300 hover:bg-amber-900/50 disabled:opacity-50 transition-colors min-h-[36px]"
+          title={`Update Claude Code${instance.claudeVersion ? ` from ${instance.claudeVersion}` : ''} — recreates the container, keeps data`}
+        >
+          {updating ? 'Updating…' : '↑ Update Claude'}
+        </button>
       )}
 
       {/* Actions — larger touch targets for mobile */}

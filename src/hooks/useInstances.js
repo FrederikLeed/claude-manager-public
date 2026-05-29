@@ -1,13 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { fetchInstances, createInstance, startInstance, stopInstance, removeInstance, recreateInstance } from '../api.js';
+import { fetchInstances, createInstance, startInstance, stopInstance, removeInstance, recreateInstance, updateClaude as updateClaudeApi } from '../api.js';
 
-export function useInstances() {
+export function useInstances({ onNotify, onImageStatus } = {}) {
   const [instances, setInstances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const reconnectDelay = useRef(1000);
+  // Keep the latest callbacks without forcing a WebSocket reconnect on each render
+  const onNotifyRef = useRef(onNotify);
+  const onImageStatusRef = useRef(onImageStatus);
+  useEffect(() => { onNotifyRef.current = onNotify; }, [onNotify]);
+  useEffect(() => { onImageStatusRef.current = onImageStatus; }, [onImageStatus]);
 
   const loadInstances = useCallback(async () => {
     try {
@@ -35,8 +40,18 @@ export function useInstances() {
         reconnectDelay.current = 1000; // Reset on successful connect
       };
 
-      ws.onmessage = () => {
-        // On any event, re-fetch the full list for consistency
+      ws.onmessage = (event) => {
+        // Surface instance lifecycle notifications (Claude finished / needs
+        // attention) to the caller before refreshing.
+        let data = null;
+        try { data = JSON.parse(event.data); } catch { /* non-JSON ping */ }
+        if (data?.type === 'instance_notify') {
+          onNotifyRef.current?.(data);
+        }
+        if (data?.type === 'workspace_image') {
+          onImageStatusRef.current?.(data.status);
+        }
+        // On any event, re-fetch the full list for consistency (picks up usage)
         loadInstances();
       };
 
@@ -89,5 +104,11 @@ export function useInstances() {
     return result;
   }, [loadInstances]);
 
-  return { instances, loading, error, create, start, stop, remove, recreate, refresh: loadInstances };
+  const updateClaude = useCallback(async (id) => {
+    const result = await updateClaudeApi(id);
+    await loadInstances();
+    return result;
+  }, [loadInstances]);
+
+  return { instances, loading, error, create, start, stop, remove, recreate, updateClaude, refresh: loadInstances };
 }

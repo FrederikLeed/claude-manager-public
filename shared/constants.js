@@ -36,13 +36,20 @@ export const WS_EVENTS = {
   GRANT_EXPIRED: 'grant_expired',
   ACCESS_REQUESTED: 'access_requested',
   ACCESS_RESOLVED: 'access_resolved',
+  // Reported from inside a container by the Claude Code Stop/Notification hook
+  INSTANCE_NOTIFY: 'instance_notify',
+  // Workspace image rebuild status (latest Claude Code)
+  WORKSPACE_IMAGE: 'workspace_image',
 };
+
+// Claude Code hook events that an instance reports to the manager
+export const INSTANCE_EVENTS = ['Stop', 'Notification'];
 
 export const NETWORK_POLICIES = ['claude-only', 'claude-github', 'claude-full-dev', 'unrestricted'];
 
 export const LLM_BACKENDS = [
   { id: 'claude-max', name: 'Claude Max', description: 'Anthropic direct (requires claude login)' },
-  { id: 'local-llm', name: 'Local LLM', description: 'Qwen3 30B via Ollama (local GPU)' },
+  { id: 'local-llm', name: 'Local LLM', description: 'Qwen3 30B via Ollama (RTX 3090)' },
   { id: 'foundry', name: 'Azure AI Foundry (GPT-4.1-mini)', description: 'GPT-4.1-mini via Azure AI Foundry' },
   { id: 'foundry-latest', name: 'Azure AI Foundry (GPT Latest)', description: 'GPT Latest via Azure AI Foundry' },
 ];

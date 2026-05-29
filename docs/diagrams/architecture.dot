@@ -7,7 +7,7 @@ digraph G {
     ranksep=0.55
     fontname="Helvetica"
     labelloc=t
-    label=<<B>Claude Manager — Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Six-container stack · per-container network policy · pluggable LLM backend</FONT>>
+    label=<<B>Claude Manager v2 — Architecture</B><BR/><FONT POINT-SIZE="11" COLOR="#666666">Six-container stack · per-container network policy · pluggable LLM backend</FONT>>
     fontsize=18
     bgcolor="#FAFAFA"
   ]
@@ -22,7 +22,7 @@ digraph G {
     label=<<B>Docker Host (claude-manager-net bridge)</B>>; labeljust=l; style="rounded,dashed"; color="#999999"; bgcolor="#F5F5F5"; fontsize=13
 
     subgraph cluster_manager {
-      label=<<B>claude-manager</B> :3002>; labeljust=l
+      label=<<B>claude-manager-v2</B> :3002>; labeljust=l
       style="rounded,filled"; fillcolor="#E3F2FD"; color="#1565C0"; penwidth=2
 
       frontend [label=<<B>React 19 Frontend</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
@@ -65,7 +65,7 @@ digraph G {
 
       ollama [label=<<B>cm-ollama</B> :11434<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
         Qwen3 30B-A3B<BR ALIGN="LEFT"/>
-        NVIDIA GPU (≥24 GB VRAM)<BR ALIGN="LEFT"/>
+        NVIDIA RTX 3090 (CUDA)<BR ALIGN="LEFT"/>
       </FONT>> fillcolor="#FFE0B2" color="#E65100"]
 
       litellm_db [label=<<B>cm-litellm-db</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">PostgreSQL 16<BR ALIGN="LEFT"/>LiteLLM virtual key state<BR ALIGN="LEFT"/></FONT>>

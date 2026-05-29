@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     net-tools \
     iptables \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI
@@ -51,8 +52,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Global npm packages
-RUN npm install -g @anthropic-ai/claude-code typescript ts-node https-proxy-agent
+# Global npm packages.
+# The ADD fetches the npm registry's "latest" metadata for claude-code,
+# which changes every time a new version is published — that invalidates
+# this layer's cache automatically, so rebuilds always pick up the newest
+# CLI (and its newest default model) without needing --no-cache.
+ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/claude-code-latest.json
+RUN npm install -g @anthropic-ai/claude-code@latest typescript ts-node https-proxy-agent \
+    && rm -f /tmp/claude-code-latest.json
 
 # Create non-root user
 RUN useradd -m -s /bin/bash claude \
@@ -72,6 +79,17 @@ RUN sed -i 's/\r$//' /home/claude/.proxy-bootstrap.js \
 COPY scripts/cm-access /usr/local/bin/cm-access
 RUN sed -i 's/\r$//' /usr/local/bin/cm-access \
     && chmod +x /usr/local/bin/cm-access
+
+# Copy cm-notify hook (reports Stop/Notification + token usage to the manager)
+COPY scripts/cm-notify /usr/local/bin/cm-notify
+RUN sed -i 's/\r$//' /usr/local/bin/cm-notify \
+    && chmod +x /usr/local/bin/cm-notify
+
+# Managed Claude Code settings — highest precedence, NOT overridden by a
+# bind-mount over /home/claude/.claude. Registers the cm-notify Stop/Notification
+# hooks for every session in this image.
+COPY config/managed-settings.json /etc/claude-code/managed-settings.json
+RUN sed -i 's/\r$//' /etc/claude-code/managed-settings.json
 
 # Copy entrypoint
 COPY scripts/entrypoint.sh /entrypoint.sh

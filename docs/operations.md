@@ -155,11 +155,8 @@ Pick at instance creation, or change later via the recreate flow.
 | `claude-full-dev` | + npm, yarn, PyPI, files.pythonhosted.org, Cargo, Docker Hub |
 | `unrestricted` | No filtering — requires `network_unrestricted` grant (default 24 h) |
 
-The exact host lists live in `policies/*.yaml` (baked into the
-manager image at `/app/policies`). To add a custom policy, drop a
-YAML file in `policies/`, also copy it to `workspace/policies/` to
-keep `cm-access` views consistent, then rebuild the manager image
-(`docker compose --profile build-only build claude-manager`).
+The exact host lists live in `workspace/policies/*.yaml`. Drop in a
+custom YAML there to add new policies (restart manager to pick it up).
 
 ### Approving access requests
 
@@ -385,10 +382,10 @@ out.
 ### Logs
 
 ```bash
-docker compose logs claude-manager --tail 50 -f
-docker compose logs cm-proxy --tail 50
-docker compose logs cm-litellm --tail 50
-docker compose logs cm-ollama --tail 50
+docker compose -f docker-compose.yml logs claude-manager --tail 50 -f
+docker compose -f docker-compose.yml logs cm-proxy --tail 50
+docker compose -f docker-compose.yml logs cm-litellm --tail 50
+docker compose -f docker-compose.yml logs cm-ollama --tail 50
 ```
 
 ---

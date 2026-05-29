@@ -100,6 +100,28 @@ export function initDb() {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_access_req_instance ON access_requests(instance_id)');
 
+  // Latest Claude Code token/context usage per instance, reported by the
+  // in-container Stop/Notification hook. One row per instance (latest wins).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS instance_usage (
+      instance_id TEXT PRIMARY KEY,
+      context_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      model TEXT,
+      last_event TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Key/value store for manager-wide metadata (e.g. workspace image version)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Migrations
   const columns = db.prepare("PRAGMA table_info(instances)").all();
   if (!columns.some((c) => c.name === 'docker_id')) {
@@ -107,6 +129,10 @@ export function initDb() {
   }
   if (!columns.some((c) => c.name === 'litellm_key')) {
     db.exec('ALTER TABLE instances ADD COLUMN litellm_key TEXT');
+  }
+  // Claude Code version baked into the image this instance was (re)created from
+  if (!columns.some((c) => c.name === 'claude_version')) {
+    db.exec('ALTER TABLE instances ADD COLUMN claude_version TEXT');
   }
 
   return db;
@@ -343,6 +369,51 @@ function parseAccessRequest(row) {
     ...row,
     requested_hosts: row.requested_hosts ? JSON.parse(row.requested_hosts) : null,
   };
+}
+
+// --- Manager metadata (key/value) ---
+
+export function getMeta(key) {
+  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+export function setMeta(key, value) {
+  db.prepare(`
+    INSERT INTO meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+  `).run(key, value == null ? null : String(value));
+}
+
+export function setInstanceClaudeVersion(id, version) {
+  db.prepare('UPDATE instances SET claude_version = ? WHERE id = ?').run(version || null, id);
+}
+
+// --- Instance usage (reported by in-container Claude Code hook) ---
+
+export function setInstanceUsage(instanceId, { contextTokens = 0, outputTokens = 0, model = null, event = null }) {
+  db.prepare(`
+    INSERT INTO instance_usage (instance_id, context_tokens, output_tokens, model, last_event, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(instance_id) DO UPDATE SET
+      context_tokens = excluded.context_tokens,
+      output_tokens = excluded.output_tokens,
+      model = COALESCE(excluded.model, instance_usage.model),
+      last_event = excluded.last_event,
+      updated_at = datetime('now')
+  `).run(instanceId, contextTokens, outputTokens, model, event);
+}
+
+export function getInstanceUsage(instanceId) {
+  return db.prepare('SELECT * FROM instance_usage WHERE instance_id = ?').get(instanceId) || null;
+}
+
+export function getAllInstanceUsage() {
+  return db.prepare('SELECT * FROM instance_usage').all();
+}
+
+export function deleteInstanceUsage(instanceId) {
+  db.prepare('DELETE FROM instance_usage WHERE instance_id = ?').run(instanceId);
 }
 
 export function closeDb() {

@@ -1,10 +1,10 @@
 ---
-title: What Claude Manager gives the operator
+title: What Claude Manager v2 gives the operator
 markmap:
   colorFreezeLevel: 2
 ---
 
-# Claude Manager
+# Claude Manager v2
 
 ## Instance lifecycle
 ### Create · Start · Stop · Remove
@@ -52,7 +52,7 @@ markmap:
 - Requires `claude login` inside the container
 ### local-llm
 - Qwen3 30B-A3B via Ollama
-- Runs on local NVIDIA GPU (≥24 GB VRAM)
+- Runs on RTX 3090
 ### foundry · foundry-latest
 - Azure AI Foundry GPT-4.1-mini · GPT Latest
 ### Routing

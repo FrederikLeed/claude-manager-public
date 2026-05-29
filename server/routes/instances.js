@@ -21,8 +21,13 @@ import {
   deleteGrantsForInstance,
   getGrantsForInstance,
   getAccessRequestsForInstance,
+  setInstanceUsage,
+  getAllInstanceUsage,
+  deleteInstanceUsage,
+  setInstanceClaudeVersion,
 } from '../db.js';
-import { WS_EVENTS, NETWORK_POLICIES } from '../../shared/constants.js';
+import { WS_EVENTS, NETWORK_POLICIES, INSTANCE_EVENTS } from '../../shared/constants.js';
+import { getCurrentImageVersion } from '../workspace-image.js';
 import { createGrantsForInstance } from '../grants.js';
 import { isAvailable as litellmAvailable, createVirtualKey, deleteVirtualKey } from '../litellm.js';
 import { writeContainerACL, removeContainerACL } from '../proxy.js';
@@ -119,6 +124,9 @@ export default async function instanceRoutes(fastify) {
       tags,
     });
 
+    // Stamp the Claude Code version this instance launched on (for update badge)
+    setInstanceClaudeVersion(instance.id, getCurrentImageVersion());
+
     // Create capability grants for high-risk capabilities
     createGrantsForInstance(instance.id, { dockerSocket, networkPolicy, expiryHours });
 
@@ -192,6 +200,46 @@ export default async function instanceRoutes(fastify) {
     return { ok: true };
   });
 
+  // Report a Claude Code lifecycle event + token usage (called from INSIDE
+  // containers by the Stop/Notification hook — no device auth, see auth.js).
+  fastify.post('/api/instances/:id/event', {
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          event: { type: 'string' },
+          contextTokens: { type: 'number', minimum: 0, default: 0 },
+          outputTokens: { type: 'number', minimum: 0, default: 0 },
+          model: { type: 'string' },
+          message: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { id } = request.params;
+    const { event, contextTokens = 0, outputTokens = 0, model, message } = request.body || {};
+
+    // Only persist usage for known lifecycle events; ignore unknown noise.
+    const known = INSTANCE_EVENTS.includes(event);
+    if (known) {
+      setInstanceUsage(id, { contextTokens, outputTokens, model, event });
+    }
+
+    const dbData = getInstance(id);
+    broadcast({
+      type: WS_EVENTS.INSTANCE_NOTIFY,
+      id,
+      name: dbData?.name || id,
+      event: event || 'Stop',
+      message: message || null,
+      usage: { contextTokens, outputTokens, model: model || null },
+      timestamp: Date.now(),
+    });
+
+    reply.code(202);
+    return { ok: true };
+  });
+
   // Update instance metadata
   fastify.patch('/api/instances/:id', {
     schema: {
@@ -248,6 +296,34 @@ export default async function instanceRoutes(fastify) {
     return result;
   });
 
+  // Update an instance to the latest workspace image (latest Claude Code).
+  // Recreates the container preserving the workspace volume + all binds — data
+  // is retained; only the image (and thus the Claude Code version) changes.
+  fastify.post('/api/instances/:id/update-claude', async (request, reply) => {
+    const { id } = request.params;
+    const dbData = getInstance(id);
+    let result;
+    try {
+      result = await recreateInstance(id, { updateImage: true });
+    } catch (err) {
+      reply.code(err.statusCode || 500);
+      return { error: err.message };
+    }
+
+    if (dbData && result.dockerId !== dbData.docker_id) {
+      upsertInstance({ id, dockerId: result.dockerId, name: dbData.name, image: result.image });
+    }
+    setInstanceClaudeVersion(id, getCurrentImageVersion());
+
+    // Re-assert the proxy ACL for the freshly created container
+    try {
+      await writeContainerACL(id, { networkPolicy: result.networkPolicy || 'unrestricted' });
+    } catch { /* best effort */ }
+
+    logActivity('updated', id, dbData?.name || id, `Claude Code → ${getCurrentImageVersion() || 'latest'}`);
+    return result;
+  });
+
   // Execute command in instance (for testing/admin)
   fastify.post('/api/instances/:id/exec', {
     schema: {
@@ -299,6 +375,7 @@ export default async function instanceRoutes(fastify) {
     await removeInstance(id, { removeVolume });
     deleteGrantsForInstance(id);
     removeContainerACL(id);
+    deleteInstanceUsage(id);
     deleteInstance(id);
     logActivity('removed', id, instanceName, removeVolume ? 'Volume removed' : 'Volume kept');
     return { ok: true };
@@ -307,6 +384,8 @@ export default async function instanceRoutes(fastify) {
 
 function mergeInstances(dockerContainers, dbInstances) {
   const dbMap = new Map(dbInstances.map((i) => [i.id, i]));
+  const usageMap = new Map(getAllInstanceUsage().map((u) => [u.instance_id, u]));
+  const currentImageVersion = getCurrentImageVersion();
 
   return dockerContainers.map((container) => {
     const dbData = dbMap.get(container.id);
@@ -314,6 +393,7 @@ function mergeInstances(dockerContainers, dbInstances) {
     const accessRequests = getAccessRequestsForInstance(container.id);
     const pendingRequests = accessRequests.filter(r => r.status === 'pending').length;
     const hasCustomHosts = accessRequests.some(r => r.status === 'approved' && r.requested_hosts?.length > 0);
+    const usageRow = usageMap.get(container.id);
     return {
       ...container,
       name: dbData?.name || container.name,
@@ -322,6 +402,15 @@ function mergeInstances(dockerContainers, dbInstances) {
       grants,
       pendingRequests,
       hasCustomHosts,
+      claudeVersion: dbData?.claude_version || null,
+      updateAvailable: !!(dbData?.claude_version && currentImageVersion && dbData.claude_version !== currentImageVersion),
+      usage: usageRow ? {
+        contextTokens: usageRow.context_tokens,
+        outputTokens: usageRow.output_tokens,
+        model: usageRow.model,
+        lastEvent: usageRow.last_event,
+        updatedAt: usageRow.updated_at,
+      } : null,
     };
   });
 }
