@@ -55,6 +55,22 @@ async function ensureTrivyImage(log) {
   state.imageReady = true;
 }
 
+/** Split a non-TTY Docker log buffer into stdout/stderr (8-byte frame headers). */
+function demuxBuffer(buf) {
+  let stdout = '', stderr = '';
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const type = buf[i];
+    const len = buf.readUInt32BE(i + 4);
+    const payload = buf.slice(i + 8, i + 8 + len).toString('utf8');
+    if (type === 2) stderr += payload; else stdout += payload;
+    i += 8 + len;
+  }
+  // Fallback: if framing wasn't present (rare), treat the whole thing as stdout
+  if (!stdout && !stderr) stdout = buf.toString('utf8');
+  return { stdout, stderr };
+}
+
 /** Resolve the workspace volume name for an instance's container. */
 async function getWorkspaceVolume(dockerId) {
   const inspect = await docker.getContainer(dockerId).inspect();
@@ -64,6 +80,10 @@ async function getWorkspaceVolume(dockerId) {
 
 /** Run Trivy against a volume, return { counts, findings } or throw. */
 async function runTrivy(volume) {
+  // Start → wait → fetch logs (NOT a live attach). Attaching to an AutoRemove
+  // container over the Docker Desktop proxy socket races — the container exits
+  // and is reaped before the stream flushes, yielding 0 bytes. Reading logs
+  // after wait() is the robust pattern docker.js uses elsewhere.
   const container = await docker.createContainer({
     Image: config.TRIVY_IMAGE,
     Cmd: ['fs', '--quiet', '--scanners', 'vuln,secret',
@@ -76,24 +96,33 @@ async function runTrivy(volume) {
     },
   });
 
-  const stdout = [], stderr = [];
-  const stream = await container.attach({ stream: true, stdout: true, stderr: true });
-  docker.modem.demuxStream(stream, { write: (c) => stdout.push(c) }, { write: (c) => stderr.push(c) });
-
   await container.start();
-  await new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    stream.on('end', finish);
-    stream.on('error', finish);
-    setTimeout(finish, SCAN_TIMEOUT_MS);
-  });
+
+  // Wait for completion (bounded), then pull the buffered logs.
   let exitCode = 0;
-  try { exitCode = (await container.wait()).StatusCode; } catch { /* already gone */ }
+  try {
+    const waitResult = await Promise.race([
+      container.wait(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('scan timed out')), SCAN_TIMEOUT_MS)),
+    ]);
+    exitCode = waitResult.StatusCode;
+  } catch (err) {
+    try { await container.remove({ force: true }); } catch { /* best effort */ }
+    throw err;
+  }
+
+  let out = '', err = '';
+  try {
+    const logBuf = await container.logs({ stdout: true, stderr: true, follow: false });
+    // Demux the multiplexed log buffer (8-byte frame headers)
+    const { stdout, stderr } = demuxBuffer(logBuf);
+    out = stdout; err = stderr;
+  } catch (e) {
+    try { await container.remove({ force: true }); } catch { /* best effort */ }
+    throw new Error(`Could not read Trivy logs: ${e.message}`);
+  }
   try { await container.remove({ force: true }); } catch { /* best effort */ }
 
-  const out = Buffer.concat(stdout).toString('utf8');
-  const err = Buffer.concat(stderr).toString('utf8');
   if (!out.trim()) throw new Error(err.trim().slice(0, 300) || `Trivy exited ${exitCode} with no output`);
 
   let report;
