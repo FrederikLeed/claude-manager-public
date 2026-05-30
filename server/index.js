@@ -21,9 +21,11 @@ import litellmRoutes from './routes/litellm.js';
 import policyRoutes from './routes/policies.js';
 import accessRequestRoutes from './routes/access-requests.js';
 import workspaceImageRoutes from './routes/workspace-image.js';
+import securityScanRoutes from './routes/security-scan.js';
 import { checkExpiredGrants } from './grants.js';
 import { syncAllACLs } from './proxy.js';
 import { initImageState, checkAndMaybeRebuild } from './workspace-image.js';
+import { scanAll } from './security-scan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -84,9 +86,11 @@ async function start() {
   await fastify.register(policyRoutes);
   await fastify.register(accessRequestRoutes);
   await fastify.register(workspaceImageRoutes);
+  await fastify.register(securityScanRoutes);
 
-  // Let the workspace-image module push build status over the same WS channel
+  // Let the workspace-image + scan modules push status over the same WS channel
   fastify.wireImageBroadcaster?.(fastify.accessRequestBroadcast);
+  fastify.wireScanBroadcaster?.(fastify.accessRequestBroadcast);
 
   // Start grant expiry checker (every 60s)
   const grantCheckInterval = setInterval(() => {
@@ -101,10 +105,19 @@ async function start() {
     }, config.IMAGE_UPDATE_INTERVAL_HOURS * 3_600_000);
   }
 
+  // Scheduled Trivy security scans of instance workspaces
+  let scanInterval = null;
+  if (config.SECURITY_SCAN_INTERVAL_HOURS > 0) {
+    scanInterval = setInterval(() => {
+      scanAll(fastify.log).catch((err) => fastify.log.error({ err }, 'scheduled scan failed'));
+    }, config.SECURITY_SCAN_INTERVAL_HOURS * 3_600_000);
+  }
+
   // Graceful shutdown — close terminal sessions, event stream, grant timer, DB
   fastify.addHook('onClose', () => {
     clearInterval(grantCheckInterval);
     if (imageUpdateInterval) clearInterval(imageUpdateInterval);
+    if (scanInterval) clearInterval(scanInterval);
     const sessionCount = getActiveSessionCount();
     if (sessionCount > 0) {
       fastify.log.info(`Closing ${sessionCount} active terminal sessions...`);

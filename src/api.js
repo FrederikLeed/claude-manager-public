@@ -112,6 +112,24 @@ export function rebuildWorkspaceImage() {
   return request('/api/workspace-image/rebuild', { method: 'POST' });
 }
 
+// --- Security scans ---
+
+export function fetchSecurityScan() {
+  return request('/api/security-scan');
+}
+
+export function runSecurityScan() {
+  return request('/api/security-scan/run', { method: 'POST' });
+}
+
+export function scanInstanceApi(id) {
+  return request(`/api/instances/${id}/scan`, { method: 'POST' });
+}
+
+export function fetchInstanceScan(id) {
+  return request(`/api/instances/${id}/scan`);
+}
+
 // --- Policies ---
 
 export function fetchPolicies() {

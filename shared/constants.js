@@ -40,6 +40,8 @@ export const WS_EVENTS = {
   INSTANCE_NOTIFY: 'instance_notify',
   // Workspace image rebuild status (latest Claude Code)
   WORKSPACE_IMAGE: 'workspace_image',
+  // Security scan status + new-critical alerts
+  SECURITY_SCAN: 'security_scan',
 };
 
 // Claude Code hook events that an instance reports to the manager

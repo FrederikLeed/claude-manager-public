@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useInstances } from '../hooks/useInstances.js';
-import { fetchSystemInfo, discoverContainers, adoptContainer, uploadFile, fetchWorkspaceImage, rebuildWorkspaceImage } from '../api.js';
+import { fetchSystemInfo, discoverContainers, adoptContainer, uploadFile, fetchWorkspaceImage, rebuildWorkspaceImage, fetchSecurityScan, runSecurityScan } from '../api.js';
+import SecurityScanModal from './SecurityScanModal.jsx';
 import InstanceCard from './InstanceCard.jsx';
 import InstanceRow from './InstanceRow.jsx';
 import NewInstanceModal from './NewInstanceModal.jsx';
@@ -51,8 +52,32 @@ export default function Dashboard({ isAdmin, deviceId }) {
   }, []);
 
   const [imageStatus, setImageStatus] = useState(null);
+  const [scanStatus, setScanStatus] = useState(null);
+  const [scanModalInstance, setScanModalInstance] = useState(null);
+
+  // Scan WS events: update status; alert ONLY on new CRITICAL (per preference)
+  const handleScanEvent = useCallback((evt) => {
+    if (evt.status) setScanStatus(evt.status);
+    if (evt.alert) {
+      showToast(`${evt.name}: ${evt.critical} CRITICAL finding${evt.critical === 1 ? '' : 's'}`, 'error', 8000);
+      if (notificationsEnabled()) desktopNotify(`${evt.name} — ${evt.critical} CRITICAL`, 'Security scan found new critical issues', `scan-${evt.instanceId}`);
+    }
+  }, []);
+
   const { instances, loading, error, create, start, stop, remove, recreate, updateClaude, refresh } =
-    useInstances({ onNotify: handleNotify, onImageStatus: setImageStatus });
+    useInstances({ onNotify: handleNotify, onImageStatus: setImageStatus, onScanEvent: handleScanEvent });
+
+  useEffect(() => { fetchSecurityScan().then(setScanStatus).catch(() => {}); }, []);
+
+  const handleRunScan = useCallback(async () => {
+    try {
+      const s = await runSecurityScan();
+      setScanStatus(s);
+      showToast('Security scan started…', 'info');
+    } catch (err) {
+      showToast(err.message || 'Scan failed to start', 'error');
+    }
+  }, []);
 
   useEffect(() => {
     fetchWorkspaceImage().then(setImageStatus).catch(() => {});
@@ -310,6 +335,17 @@ export default function Dashboard({ isAdmin, deviceId }) {
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M11.5 6.5A3.5 3.5 0 008 3a3.5 3.5 0 00-3.5 3.5c0 3-1.5 4-1.5 4h10s-1.5-1-1.5-4zM6.5 13a1.6 1.6 0 003 0" strokeLinecap="round" strokeLinejoin="round"/><path d="M1.5 1.5l13 13" strokeLinecap="round"/></svg>
               )}
             </button>
+            {isAdmin && scanStatus && (
+              <button
+                onClick={handleRunScan}
+                disabled={scanStatus.scanning}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-60 text-gray-200 text-sm font-medium rounded-lg transition-colors"
+                title={scanStatus.scanning ? `Scanning ${scanStatus.current || ''}…` : (scanStatus.lastRunAt ? `Last scan ${scanStatus.lastRunAt} UTC` : 'Run a Trivy security scan of all instances')}
+              >
+                <span className="hidden sm:inline">{scanStatus.scanning ? `Scanning${scanStatus.current ? ` ${scanStatus.current}` : ''}…` : '🛡 Scan'}</span>
+                <span className="sm:hidden">🛡</span>
+              </button>
+            )}
             {isAdmin && (
               <button
                 onClick={() => setShowDevices(true)}
@@ -454,6 +490,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     adopting={!item._managed && adopting.has(item.dockerId)}
                     onPolicyClick={setPolicyPreview}
                     onGrantClick={setGrantInstanceId}
+                    onScanClick={setScanModalInstance}
                   />
                 ))}
               </div>
@@ -475,6 +512,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
                     adopting={!item._managed && adopting.has(item.dockerId)}
                     onPolicyClick={setPolicyPreview}
                     onGrantClick={setGrantInstanceId}
+                    onScanClick={setScanModalInstance}
                   />
                 ))}
               </div>
@@ -530,6 +568,15 @@ export default function Dashboard({ isAdmin, deviceId }) {
         <LiteLLMPanel
           instanceId={litellmInstanceId}
           onClose={() => setLitellmInstanceId(null)}
+        />
+      )}
+
+      {/* Security scan findings */}
+      {scanModalInstance && (
+        <SecurityScanModal
+          instanceId={scanModalInstance.id}
+          instanceName={scanModalInstance.name}
+          onClose={() => setScanModalInstance(null)}
         />
       )}
 

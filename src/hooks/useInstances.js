@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchInstances, createInstance, startInstance, stopInstance, removeInstance, recreateInstance, updateClaude as updateClaudeApi } from '../api.js';
 
-export function useInstances({ onNotify, onImageStatus } = {}) {
+export function useInstances({ onNotify, onImageStatus, onScanEvent } = {}) {
   const [instances, setInstances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -11,8 +11,10 @@ export function useInstances({ onNotify, onImageStatus } = {}) {
   // Keep the latest callbacks without forcing a WebSocket reconnect on each render
   const onNotifyRef = useRef(onNotify);
   const onImageStatusRef = useRef(onImageStatus);
+  const onScanEventRef = useRef(onScanEvent);
   useEffect(() => { onNotifyRef.current = onNotify; }, [onNotify]);
   useEffect(() => { onImageStatusRef.current = onImageStatus; }, [onImageStatus]);
+  useEffect(() => { onScanEventRef.current = onScanEvent; }, [onScanEvent]);
 
   const loadInstances = useCallback(async () => {
     try {
@@ -50,6 +52,9 @@ export function useInstances({ onNotify, onImageStatus } = {}) {
         }
         if (data?.type === 'workspace_image') {
           onImageStatusRef.current?.(data.status);
+        }
+        if (data?.type === 'security_scan') {
+          onScanEventRef.current?.(data);
         }
         // On any event, re-fetch the full list for consistency (picks up usage)
         loadInstances();

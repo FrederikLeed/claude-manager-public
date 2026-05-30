@@ -11,10 +11,3 @@ dist/
 
 # Diagram build artifacts (markmap HTML — PNGs are tracked)
 docs/diagrams/*.html
-
-# Claude session transcripts / runtime state — may contain secrets, never commit
-data/claude-home/projects/
-data/claude-home/todos/
-data/claude-home/shell-snapshots/
-data/claude-home/statsig/
-data/claude-home/history.jsonl

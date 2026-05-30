@@ -113,6 +113,21 @@ export function initDb() {
     )
   `);
 
+  // Latest Trivy security scan result per instance
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS instance_scans (
+      instance_id TEXT PRIMARY KEY,
+      critical INTEGER DEFAULT 0,
+      high INTEGER DEFAULT 0,
+      medium INTEGER DEFAULT 0,
+      low INTEGER DEFAULT 0,
+      secrets INTEGER DEFAULT 0,
+      findings TEXT,
+      error TEXT,
+      scanned_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Key/value store for manager-wide metadata (e.g. workspace image version)
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
@@ -414,6 +429,34 @@ export function getAllInstanceUsage() {
 
 export function deleteInstanceUsage(instanceId) {
   db.prepare('DELETE FROM instance_usage WHERE instance_id = ?').run(instanceId);
+}
+
+// --- Security scans (Trivy) ---
+
+export function setInstanceScan(instanceId, { critical = 0, high = 0, medium = 0, low = 0, secrets = 0, findings = null, error = null }) {
+  db.prepare(`
+    INSERT INTO instance_scans (instance_id, critical, high, medium, low, secrets, findings, error, scanned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(instance_id) DO UPDATE SET
+      critical = excluded.critical, high = excluded.high, medium = excluded.medium,
+      low = excluded.low, secrets = excluded.secrets, findings = excluded.findings,
+      error = excluded.error, scanned_at = datetime('now')
+  `).run(instanceId, critical, high, medium, low, secrets,
+    findings ? JSON.stringify(findings) : null, error);
+}
+
+export function getInstanceScan(instanceId) {
+  const row = db.prepare('SELECT * FROM instance_scans WHERE instance_id = ?').get(instanceId);
+  if (!row) return null;
+  return { ...row, findings: row.findings ? JSON.parse(row.findings) : [] };
+}
+
+export function getAllInstanceScans() {
+  return db.prepare('SELECT instance_id, critical, high, medium, low, secrets, error, scanned_at FROM instance_scans').all();
+}
+
+export function deleteInstanceScan(instanceId) {
+  db.prepare('DELETE FROM instance_scans WHERE instance_id = ?').run(instanceId);
 }
 
 export function closeDb() {

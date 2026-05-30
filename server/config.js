@@ -10,6 +10,9 @@ export const config = Object.freeze({
   WORKSPACE_SRC_DIR: process.env.WORKSPACE_SRC_DIR || '',
   // How often to check npm for a newer Claude Code and rebuild (hours, 0 = off)
   IMAGE_UPDATE_INTERVAL_HOURS: parseInt(process.env.IMAGE_UPDATE_INTERVAL_HOURS || '24', 10),
+  // Trivy security scans of each instance's /workspace (hours, 0 = off)
+  SECURITY_SCAN_INTERVAL_HOURS: parseInt(process.env.SECURITY_SCAN_INTERVAL_HOURS || '24', 10),
+  TRIVY_IMAGE: process.env.TRIVY_IMAGE || 'aquasec/trivy:latest',
   INSTANCE_LABEL: process.env.INSTANCE_LABEL || 'claude-manager.managed=true',
   HOST_CLAUDE_DIR: process.env.HOST_CLAUDE_DIR || '/host-claude',
   MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '20', 10),

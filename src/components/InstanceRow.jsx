@@ -12,7 +12,7 @@ function timeAgo(unixTimestamp) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onUpdateClaude, onAdopt, adopting, onPolicyClick, onGrantClick }) {
+export default function InstanceRow({ instance, managed = true, onStart, onStop, onTerminal, onRemove, onRecreate, onUpdateClaude, onAdopt, adopting, onPolicyClick, onGrantClick, onScanClick }) {
   const [stopping, setStopping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [recreating, setRecreating] = useState(false);
@@ -113,6 +113,15 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
               >
                 {formatTokens(instance.usage.contextTokens)} ctx
               </span>
+            )}
+            {instance.scan && (instance.scan.critical > 0 || instance.scan.secrets > 0) && (
+              <button
+                onClick={() => onScanClick?.(instance)}
+                className="text-[10px] rounded px-1 py-0.5 shrink-0 hidden sm:inline-flex items-center gap-1 text-red-300 border border-red-800 bg-red-900/30 hover:bg-red-900/50"
+                title="Security findings — click for details"
+              >
+                🛡 {instance.scan.critical > 0 ? `${instance.scan.critical} CRIT` : `${instance.scan.secrets} secret`}
+              </button>
             )}
             <AccessRequestBadge count={instance.pendingRequests} />
           </>

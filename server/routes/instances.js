@@ -25,9 +25,11 @@ import {
   getAllInstanceUsage,
   deleteInstanceUsage,
   setInstanceClaudeVersion,
+  deleteInstanceScan,
 } from '../db.js';
 import { WS_EVENTS, NETWORK_POLICIES, INSTANCE_EVENTS } from '../../shared/constants.js';
 import { getCurrentImageVersion } from '../workspace-image.js';
+import { getAllScanSummaries } from '../security-scan.js';
 import { createGrantsForInstance } from '../grants.js';
 import { isAvailable as litellmAvailable, createVirtualKey, deleteVirtualKey } from '../litellm.js';
 import { writeContainerACL, removeContainerACL } from '../proxy.js';
@@ -376,6 +378,7 @@ export default async function instanceRoutes(fastify) {
     deleteGrantsForInstance(id);
     removeContainerACL(id);
     deleteInstanceUsage(id);
+    deleteInstanceScan(id);
     deleteInstance(id);
     logActivity('removed', id, instanceName, removeVolume ? 'Volume removed' : 'Volume kept');
     return { ok: true };
@@ -385,6 +388,7 @@ export default async function instanceRoutes(fastify) {
 function mergeInstances(dockerContainers, dbInstances) {
   const dbMap = new Map(dbInstances.map((i) => [i.id, i]));
   const usageMap = new Map(getAllInstanceUsage().map((u) => [u.instance_id, u]));
+  const scanMap = getAllScanSummaries();
   const currentImageVersion = getCurrentImageVersion();
 
   return dockerContainers.map((container) => {
@@ -411,6 +415,13 @@ function mergeInstances(dockerContainers, dbInstances) {
         lastEvent: usageRow.last_event,
         updatedAt: usageRow.updated_at,
       } : null,
+      scan: (() => {
+        const s = scanMap.get(container.id);
+        return s ? {
+          critical: s.critical, high: s.high, medium: s.medium, low: s.low,
+          secrets: s.secrets, error: s.error, scannedAt: s.scanned_at,
+        } : null;
+      })(),
     };
   });
 }
