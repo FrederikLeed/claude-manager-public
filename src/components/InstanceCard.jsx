@@ -135,7 +135,7 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
         <button
           onClick={() => onScanClick?.(instance)}
           className={`self-start text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
-            instance.scan.critical > 0
+            (instance.scan.verifiedSecrets > 0 || instance.scan.critical > 0)
               ? 'text-red-300 border-red-800 bg-red-900/30 hover:bg-red-900/50'
               : instance.scan.error
                 ? 'text-gray-500 border-gray-700 hover:bg-gray-800'
@@ -146,10 +146,11 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
           title={instance.scan.error ? `Scan error: ${instance.scan.error}` : `Trivy scan — click for findings (scanned ${instance.scan.scannedAt} UTC)`}
         >
           {instance.scan.error ? 'scan error'
+            : instance.scan.verifiedSecrets > 0 ? `🔑 ${instance.scan.verifiedSecrets} LIVE secret`
             : instance.scan.critical > 0 ? `🛡 ${instance.scan.critical} CRITICAL`
             : instance.scan.high > 0 ? `🛡 ${instance.scan.high} high`
             : '🛡 clean'}
-          {instance.scan.secrets > 0 && <span className="ml-1 text-red-300">· {instance.scan.secrets} secret</span>}
+          {instance.scan.verifiedSecrets === 0 && instance.scan.secrets > 0 && <span className="ml-1 text-gray-500">· {instance.scan.secrets} secret?</span>}
         </button>
       )}
 

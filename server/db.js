@@ -122,6 +122,7 @@ export function initDb() {
       medium INTEGER DEFAULT 0,
       low INTEGER DEFAULT 0,
       secrets INTEGER DEFAULT 0,
+      verified_secrets INTEGER DEFAULT 0,
       findings TEXT,
       error TEXT,
       scanned_at TEXT DEFAULT (datetime('now'))
@@ -148,6 +149,10 @@ export function initDb() {
   // Claude Code version baked into the image this instance was (re)created from
   if (!columns.some((c) => c.name === 'claude_version')) {
     db.exec('ALTER TABLE instances ADD COLUMN claude_version TEXT');
+  }
+  const scanCols = db.prepare("PRAGMA table_info(instance_scans)").all();
+  if (scanCols.length && !scanCols.some((c) => c.name === 'verified_secrets')) {
+    db.exec('ALTER TABLE instance_scans ADD COLUMN verified_secrets INTEGER DEFAULT 0');
   }
 
   return db;
@@ -433,15 +438,15 @@ export function deleteInstanceUsage(instanceId) {
 
 // --- Security scans (Trivy) ---
 
-export function setInstanceScan(instanceId, { critical = 0, high = 0, medium = 0, low = 0, secrets = 0, findings = null, error = null }) {
+export function setInstanceScan(instanceId, { critical = 0, high = 0, medium = 0, low = 0, secrets = 0, verifiedSecrets = 0, findings = null, error = null }) {
   db.prepare(`
-    INSERT INTO instance_scans (instance_id, critical, high, medium, low, secrets, findings, error, scanned_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO instance_scans (instance_id, critical, high, medium, low, secrets, verified_secrets, findings, error, scanned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(instance_id) DO UPDATE SET
       critical = excluded.critical, high = excluded.high, medium = excluded.medium,
-      low = excluded.low, secrets = excluded.secrets, findings = excluded.findings,
-      error = excluded.error, scanned_at = datetime('now')
-  `).run(instanceId, critical, high, medium, low, secrets,
+      low = excluded.low, secrets = excluded.secrets, verified_secrets = excluded.verified_secrets,
+      findings = excluded.findings, error = excluded.error, scanned_at = datetime('now')
+  `).run(instanceId, critical, high, medium, low, secrets, verifiedSecrets,
     findings ? JSON.stringify(findings) : null, error);
 }
 
@@ -452,7 +457,7 @@ export function getInstanceScan(instanceId) {
 }
 
 export function getAllInstanceScans() {
-  return db.prepare('SELECT instance_id, critical, high, medium, low, secrets, error, scanned_at FROM instance_scans').all();
+  return db.prepare('SELECT instance_id, critical, high, medium, low, secrets, verified_secrets, error, scanned_at FROM instance_scans').all();
 }
 
 export function deleteInstanceScan(instanceId) {

@@ -30,7 +30,7 @@ export default async function securityScanRoutes(fastify) {
     if (!s) return { findings: [], scannedAt: null };
     return {
       critical: s.critical, high: s.high, medium: s.medium, low: s.low,
-      secrets: s.secrets, error: s.error, scannedAt: s.scanned_at, findings: s.findings,
+      secrets: s.secrets, verifiedSecrets: s.verified_secrets, error: s.error, scannedAt: s.scanned_at, findings: s.findings,
     };
   });
 

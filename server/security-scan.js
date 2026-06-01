@@ -37,7 +37,7 @@ export function getScanForInstance(instanceId) {
   if (!s) return null;
   return {
     critical: s.critical, high: s.high, medium: s.medium, low: s.low,
-    secrets: s.secrets, error: s.error, scannedAt: s.scanned_at,
+    secrets: s.secrets, verifiedSecrets: s.verified_secrets, error: s.error, scannedAt: s.scanned_at,
   };
 }
 
@@ -71,6 +71,39 @@ function demuxBuffer(buf) {
   return { stdout, stderr };
 }
 
+// TruffleHog exclude-paths regex (one per line) — mirrors the Trivy skip-dirs.
+const TH_EXCLUDE_PATTERNS = [
+  '(^|/)\\.git/',
+  '(^|/)node_modules/',
+  'data/claude-home/projects/',
+  'data/claude-home/sessions/',
+  'data/claude-home/file-history/',
+  'data/claude-home/paste-cache/',
+  '\\.claude/projects/',
+];
+let _thExcludeHostPath = null;
+
+/**
+ * Write the exclude-paths file to the manager's /data dir and return its HOST
+ * path (the trufflehog sibling container needs a host bind source, not a
+ * manager-container path). Resolved once from the manager's own /data mount.
+ */
+async function ensureTruffleHogExcludes() {
+  if (_thExcludeHostPath !== null) return _thExcludeHostPath || null;
+  try {
+    const fs = await import('fs');
+    fs.writeFileSync(`${config.DATA_DIR}/.th-exclude.txt`, TH_EXCLUDE_PATTERNS.join('\n') + '\n');
+    // Resolve manager's /data bind source (host path) by inspecting self.
+    const hostname = (await import('os')).hostname();
+    const inspect = await docker.getContainer(hostname).inspect();
+    const dataMount = (inspect.Mounts || []).find((m) => m.Destination === config.DATA_DIR);
+    _thExcludeHostPath = dataMount?.Source ? `${dataMount.Source}/.th-exclude.txt` : '';
+  } catch {
+    _thExcludeHostPath = '';
+  }
+  return _thExcludeHostPath || null;
+}
+
 /** Resolve the workspace volume name for an instance's container. */
 async function getWorkspaceVolume(dockerId) {
   const inspect = await docker.getContainer(dockerId).inspect();
@@ -86,8 +119,19 @@ async function runTrivy(volume) {
   // after wait() is the robust pattern docker.js uses elsewhere.
   const container = await docker.createContainer({
     Image: config.TRIVY_IMAGE,
+    // Skip noise that isn't the instance's own source: VCS internals, deps, and
+    // Claude session transcripts (gitignored runtime state that echoes tokens in
+    // command output — they dominated scans as false-positive "secrets").
     Cmd: ['fs', '--quiet', '--scanners', 'vuln,secret',
-      '--severity', 'CRITICAL,HIGH,MEDIUM', '--format', 'json', '/scan'],
+      '--severity', 'CRITICAL,HIGH,MEDIUM', '--format', 'json',
+      '--skip-dirs', '**/.git',
+      '--skip-dirs', '**/node_modules',
+      '--skip-dirs', '**/data/claude-home/projects',
+      '--skip-dirs', '**/data/claude-home/sessions',
+      '--skip-dirs', '**/data/claude-home/file-history',
+      '--skip-dirs', '**/data/claude-home/paste-cache',
+      '--skip-dirs', '**/.claude/projects',
+      '/scan'],
     Tty: false,
     HostConfig: {
       Binds: [`${volume}:/scan:ro`, `${CACHE_VOLUME}:/root/.cache`],
@@ -151,6 +195,74 @@ async function runTrivy(volume) {
   return { counts, findings: findings.slice(0, MAX_FINDINGS) };
 }
 
+/**
+ * TruffleHog pass — verifies whether secrets are LIVE by calling the provider.
+ * Returns { verified: N, findings: [...] }. Best-effort: returns 0 on any error
+ * (the Trivy secret scan already ran; this just adds the "is it live" signal).
+ */
+async function runTruffleHog(volume, log) {
+  if (!config.TRUFFLEHOG_IMAGE) return { verified: 0, findings: [] };
+  try { await docker.getImage(config.TRUFFLEHOG_IMAGE).inspect(); }
+  catch {
+    try {
+      const s = await docker.pull(config.TRUFFLEHOG_IMAGE);
+      await new Promise((res, rej) => docker.modem.followProgress(s, (e) => (e ? rej(e) : res())));
+    } catch (e) { log?.warn({ err: e.message }, 'trufflehog pull failed'); return { verified: 0, findings: [] }; }
+  }
+
+  // Exclude the same noise Trivy skips (VCS internals + Claude session
+  // transcripts) so the verified-secret signal reflects the instance's own code,
+  // not gitignored runtime logs. TruffleHog takes a regex-per-line file; write it
+  // into the manager-local DATA_DIR and mount it read-only into the scan.
+  const excludeHostPath = await ensureTruffleHogExcludes();
+
+  const binds = [`${volume}:/scan:ro`];
+  const cmd = ['filesystem', '/scan', '--results=verified', '--json', '--no-update'];
+  if (excludeHostPath) {
+    binds.push(`${excludeHostPath}:/th-exclude.txt:ro`);
+    cmd.push('--exclude-paths=/th-exclude.txt');
+  }
+
+  const container = await docker.createContainer({
+    Image: config.TRUFFLEHOG_IMAGE,
+    // --results=verified → only secrets confirmed live against their provider.
+    // NetworkMode bridge so verification can reach the internet (read-only mount).
+    Cmd: cmd,
+    Tty: false,
+    HostConfig: { Binds: binds, NetworkMode: 'bridge', AutoRemove: false },
+  });
+  await container.start();
+  try {
+    await Promise.race([
+      container.wait(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('trufflehog timed out')), SCAN_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    try { await container.remove({ force: true }); } catch { /* best effort */ }
+    log?.warn({ err: e.message }, 'trufflehog wait failed'); return { verified: 0, findings: [] };
+  }
+  let out = '';
+  try { out = demuxBuffer(await container.logs({ stdout: true, stderr: false, follow: false })).stdout; }
+  catch { /* ignore */ }
+  try { await container.remove({ force: true }); } catch { /* best effort */ }
+
+  // TruffleHog emits one JSON object per line (NDJSON), only verified results.
+  const findings = [];
+  for (const line of out.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    try {
+      const r = JSON.parse(t);
+      if (!r.DetectorName) continue;
+      const sm = r.SourceMetadata?.Data?.Filesystem?.file || '';
+      findings.push({ type: 'verified-secret', severity: 'CRITICAL', verified: true,
+        id: r.DetectorName, title: `Verified live ${r.DetectorName} secret`,
+        target: sm.replace(/^\/scan\//, ''), line: r.SourceMetadata?.Data?.Filesystem?.line || null });
+    } catch { /* skip non-result lines */ }
+  }
+  return { verified: findings.length, findings };
+}
+
 /** Scan a single instance; store + return its summary. */
 export async function scanInstance(instance, log) {
   await ensureTrivyImage(log);
@@ -159,13 +271,19 @@ export async function scanInstance(instance, log) {
     const volume = await getWorkspaceVolume(instance.dockerId);
     if (!volume) throw new Error('No /workspace volume found');
     const { counts, findings } = await runTrivy(volume);
-    setInstanceScan(instance.id, { ...counts, findings, error: null });
+    // Verified-live secret pass (best-effort; never fails the scan)
+    const th = await runTruffleHog(volume, log);
+    // Surface verified secrets first — they're the actionable ones.
+    const allFindings = [...th.findings, ...findings].slice(0, MAX_FINDINGS);
+    setInstanceScan(instance.id, { ...counts, verifiedSecrets: th.verified, findings: allFindings, error: null });
     const newCritical = counts.critical > (prev?.critical || 0);
-    return { id: instance.id, name: instance.name, ...counts, newCritical };
+    const newVerified = th.verified > (prev?.verified_secrets || 0);
+    return { id: instance.id, name: instance.name, ...counts, verifiedSecrets: th.verified, newCritical, newVerified };
   } catch (err) {
     log?.warn({ err: err.message, instance: instance.id }, 'Trivy scan failed');
     setInstanceScan(instance.id, { critical: prev?.critical || 0, high: prev?.high || 0,
       medium: prev?.medium || 0, low: prev?.low || 0, secrets: prev?.secrets || 0,
+      verifiedSecrets: prev?.verified_secrets || 0,
       findings: prev?.findings || null, error: err.message.slice(0, 200) });
     return { id: instance.id, name: instance.name, error: err.message };
   }
@@ -182,24 +300,24 @@ export async function scanAll(log, { only = null } = {}) {
     let targets = containers.filter((c) => c.state === 'running');
     if (only) targets = targets.filter((c) => c.id === only);
 
-    const newCriticalInstances = [];
+    const alertInstances = [];
     for (const inst of targets) {
       state.current = inst.name;
       _broadcast({ type: 'security_scan', status: getScanStatus() });
       const r = await scanInstance(inst, log);
-      if (r.newCritical) newCriticalInstances.push(r);
+      // Alert on new CRITICAL vulns OR new VERIFIED-LIVE secrets (both actionable)
+      if (r.newCritical || r.newVerified) alertInstances.push(r);
     }
 
     state.lastRunAt = new Date().toISOString();
     state.current = null;
 
-    // Alert ONLY on new critical findings (per user preference)
-    for (const r of newCriticalInstances) {
+    for (const r of alertInstances) {
       _broadcast({ type: 'security_scan', alert: true,
-        instanceId: r.id, name: r.name, critical: r.critical });
+        instanceId: r.id, name: r.name, critical: r.critical, verifiedSecrets: r.verifiedSecrets });
     }
-    log?.info(`Security scan complete — ${targets.length} instances, ${newCriticalInstances.length} with new CRITICAL`);
-    return { started: true, scanned: targets.length, newCritical: newCriticalInstances.length };
+    log?.info(`Security scan complete — ${targets.length} instances, ${alertInstances.length} alerting (new CRITICAL or verified secret)`);
+    return { started: true, scanned: targets.length, alerting: alertInstances.length };
   } finally {
     state.scanning = false;
     _broadcast({ type: 'security_scan', status: getScanStatus() });

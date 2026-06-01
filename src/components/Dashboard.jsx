@@ -59,8 +59,11 @@ export default function Dashboard({ isAdmin, deviceId }) {
   const handleScanEvent = useCallback((evt) => {
     if (evt.status) setScanStatus(evt.status);
     if (evt.alert) {
-      showToast(`${evt.name}: ${evt.critical} CRITICAL finding${evt.critical === 1 ? '' : 's'}`, 'error', 8000);
-      if (notificationsEnabled()) desktopNotify(`${evt.name} — ${evt.critical} CRITICAL`, 'Security scan found new critical issues', `scan-${evt.instanceId}`);
+      const msg = evt.verifiedSecrets > 0
+        ? `${evt.verifiedSecrets} LIVE secret${evt.verifiedSecrets === 1 ? '' : 's'}`
+        : `${evt.critical} CRITICAL finding${evt.critical === 1 ? '' : 's'}`;
+      showToast(`${evt.name}: ${msg}`, 'error', 8000);
+      if (notificationsEnabled()) desktopNotify(`${evt.name} — ${msg}`, 'Security scan found new actionable issues', `scan-${evt.instanceId}`);
     }
   }, []);
 

@@ -35,14 +35,22 @@ export default function SecurityScanModal({ instanceId, instanceName, onClose })
             <div className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2 mb-3">Scan error: {data.error}</div>
           )}
           {!loading && (
-            <div className="flex gap-2 mb-4 text-xs">
-              {['critical', 'high', 'medium', 'secrets'].map((k) => (
+            <div className="flex flex-wrap gap-2 mb-4 text-xs">
+              {data?.verifiedSecrets > 0 && (
+                <span className="px-2 py-1 rounded border border-red-700 bg-red-900/50 text-red-200 font-semibold">
+                  🔑 {data.verifiedSecrets} LIVE secret{data.verifiedSecrets === 1 ? '' : 's'}
+                </span>
+              )}
+              {['critical', 'high', 'medium'].map((k) => (
                 <span key={k} className={`px-2 py-1 rounded border ${
-                  k === 'critical' ? SEV_STYLE.CRITICAL : k === 'high' ? SEV_STYLE.HIGH : k === 'secrets' ? SEV_STYLE.CRITICAL : SEV_STYLE.MEDIUM
+                  k === 'critical' ? SEV_STYLE.CRITICAL : k === 'high' ? SEV_STYLE.HIGH : SEV_STYLE.MEDIUM
                 }`}>
                   {data?.[k] || 0} {k}
                 </span>
               ))}
+              <span className="px-2 py-1 rounded border border-gray-700 text-gray-400" title="Regex-matched secrets (unverified — may be false positives)">
+                {data?.secrets || 0} secret matches
+              </span>
             </div>
           )}
           {!loading && findings.length === 0 && !data?.error && (
@@ -51,11 +59,12 @@ export default function SecurityScanModal({ instanceId, instanceName, onClose })
           {!loading && findings.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {findings.map((f, i) => (
-                <div key={i} className={`px-3 py-2 rounded border text-xs ${SEV_STYLE[f.severity] || SEV_STYLE.LOW}`}>
+                <div key={i} className={`px-3 py-2 rounded border text-xs ${f.verified ? 'text-red-200 bg-red-900/50 border-red-700' : (SEV_STYLE[f.severity] || SEV_STYLE.LOW)}`}>
                   <div className="flex items-center gap-2">
                     <span className="font-semibold">{f.severity}</span>
                     <span className="font-mono">{f.id}</span>
-                    {f.type === 'secret' && <span className="px-1 rounded bg-red-950 text-red-300">secret</span>}
+                    {f.verified && <span className="px-1 rounded bg-red-950 text-red-200 font-semibold">🔑 LIVE</span>}
+                    {f.type === 'secret' && !f.verified && <span className="px-1 rounded bg-gray-800 text-gray-400">secret match</span>}
                   </div>
                   <div className="text-gray-300 mt-0.5">{f.title || '(no title)'}</div>
                   <div className="text-gray-500 mt-0.5 font-mono truncate">

@@ -114,13 +114,13 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
                 {formatTokens(instance.usage.contextTokens)} ctx
               </span>
             )}
-            {instance.scan && (instance.scan.critical > 0 || instance.scan.secrets > 0) && (
+            {instance.scan && (instance.scan.verifiedSecrets > 0 || instance.scan.critical > 0) && (
               <button
                 onClick={() => onScanClick?.(instance)}
                 className="text-[10px] rounded px-1 py-0.5 shrink-0 hidden sm:inline-flex items-center gap-1 text-red-300 border border-red-800 bg-red-900/30 hover:bg-red-900/50"
                 title="Security findings — click for details"
               >
-                🛡 {instance.scan.critical > 0 ? `${instance.scan.critical} CRIT` : `${instance.scan.secrets} secret`}
+                {instance.scan.verifiedSecrets > 0 ? `🔑 ${instance.scan.verifiedSecrets} LIVE` : `🛡 ${instance.scan.critical} CRIT`}
               </button>
             )}
             <AccessRequestBadge count={instance.pendingRequests} />

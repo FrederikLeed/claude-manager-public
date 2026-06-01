@@ -1,0 +1,20 @@
+#!/bin/bash
+# Global pre-commit hook (installed via core.hooksPath) — blocks commits that
+# contain secrets, using gitleaks on the staged diff. Prevents leaking PATs /
+# API keys into git history at the source. Set CM_SKIP_SECRET_SCAN=1 to bypass.
+set -uo pipefail
+
+[ "${CM_SKIP_SECRET_SCAN:-0}" = "1" ] && exit 0
+command -v gitleaks >/dev/null 2>&1 || exit 0   # tool missing → don't block
+
+if gitleaks git --staged --no-banner --redact --exit-code 1 >/tmp/.gitleaks-pre-commit 2>&1; then
+  exit 0
+fi
+
+echo ""
+echo -e "\033[1;31m✖ Commit blocked — gitleaks found possible secret(s) in your staged changes:\033[0m"
+grep -iE 'finding|secret|rule|file|line' /tmp/.gitleaks-pre-commit 2>/dev/null | head -20
+echo ""
+echo "Remove the secret(s) and re-commit. To bypass once (NOT recommended):"
+echo "    CM_SKIP_SECRET_SCAN=1 git commit ..."
+exit 1

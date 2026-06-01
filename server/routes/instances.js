@@ -419,7 +419,7 @@ function mergeInstances(dockerContainers, dbInstances) {
         const s = scanMap.get(container.id);
         return s ? {
           critical: s.critical, high: s.high, medium: s.medium, low: s.low,
-          secrets: s.secrets, error: s.error, scannedAt: s.scanned_at,
+          secrets: s.secrets, verifiedSecrets: s.verified_secrets, error: s.error, scannedAt: s.scanned_at,
         } : null;
       })(),
     };

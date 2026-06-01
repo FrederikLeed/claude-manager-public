@@ -13,6 +13,9 @@ export const config = Object.freeze({
   // Trivy security scans of each instance's /workspace (hours, 0 = off)
   SECURITY_SCAN_INTERVAL_HOURS: parseInt(process.env.SECURITY_SCAN_INTERVAL_HOURS || '24', 10),
   TRIVY_IMAGE: process.env.TRIVY_IMAGE || 'aquasec/trivy:latest',
+  // TruffleHog verifies whether found secrets are LIVE (calls the provider).
+  // Empty disables the verified-secrets pass.
+  TRUFFLEHOG_IMAGE: process.env.TRUFFLEHOG_IMAGE || 'ghcr.io/trufflesecurity/trufflehog:latest',
   INSTANCE_LABEL: process.env.INSTANCE_LABEL || 'claude-manager.managed=true',
   HOST_CLAUDE_DIR: process.env.HOST_CLAUDE_DIR || '/host-claude',
   MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '20', 10),

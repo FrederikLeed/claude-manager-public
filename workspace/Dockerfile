@@ -52,6 +52,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# gitleaks — secret scanner used by the global pre-commit hook (blocks committing
+# secrets at the source). Pinned, multi-arch.
+RUN GL_VER=8.21.2 \
+    && ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in amd64) GLA=x64 ;; arm64) GLA=arm64 ;; *) GLA=x64 ;; esac \
+    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_${GLA}.tar.gz" \
+       -o /tmp/gitleaks.tgz \
+    && tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks \
+    && chmod +x /usr/local/bin/gitleaks \
+    && rm -f /tmp/gitleaks.tgz \
+    && gitleaks version
+
 # Global npm packages.
 # The ADD fetches the npm registry's "latest" metadata for claude-code,
 # which changes every time a new version is published — that invalidates
@@ -91,6 +103,11 @@ RUN sed -i 's/\r$//' /usr/local/bin/cm-notify \
 COPY config/managed-settings.json /etc/claude-code/managed-settings.json
 RUN sed -i 's/\r$//' /etc/claude-code/managed-settings.json
 
+# Global git pre-commit hook — blocks committing secrets (gitleaks) in every repo
+COPY scripts/git-pre-commit /etc/git-hooks/pre-commit
+RUN sed -i 's/\r$//' /etc/git-hooks/pre-commit \
+    && chmod +x /etc/git-hooks/pre-commit
+
 # Copy entrypoint
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh \
@@ -106,6 +123,10 @@ USER claude
 # Activate proxy bootstrap for Node.js (patches https.globalAgent) if proxy is configured
 RUN echo 'alias claude="claude --dangerously-skip-permissions"' >> /home/claude/.bashrc \
     && echo '[ -n "$HTTPS_PROXY" ] && [ -f "$HOME/.proxy-bootstrap.js" ] && export NODE_PATH="/usr/lib/node_modules:${NODE_PATH:-}" && export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }-r $HOME/.proxy-bootstrap.js"' >> /home/claude/.bashrc
+
+# Route every repo's hooks to the global hook dir so the secret-blocking
+# pre-commit applies without per-repo `git init` setup.
+RUN git config --global core.hooksPath /etc/git-hooks
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
