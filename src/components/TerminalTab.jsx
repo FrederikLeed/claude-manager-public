@@ -218,13 +218,16 @@ export default function TerminalTab({ instanceId, visible }) {
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
 
+        let gotData = false;
         ws.onopen = () => {
-          reconnectDelay.current = 1000;
           sendResize();
           registerTerminal(instanceId, { send: (d) => { if (ws.readyState === 1) ws.send(d); } });
         };
 
         ws.onmessage = (event) => {
+          // Only a session that actually produced output resets the backoff; the
+          // server accepts the upgrade before it can reject a stopped instance.
+          if (!gotData) { gotData = true; reconnectDelay.current = 1000; }
           if (event.data instanceof ArrayBuffer) {
             term.write(new Uint8Array(event.data));
           } else {
@@ -238,9 +241,14 @@ export default function TerminalTab({ instanceId, visible }) {
           }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           unregisterTerminal(instanceId);
           if (closingRef.current) return;
+          // 4404 = instance gone, 4409 = not running: final, don't hammer the server
+          if (event.code === 4404 || event.code === 4409) {
+            term.writeln(`\r\n\x1b[33m${event.code === 4404 ? 'Instance not found' : 'Instance is not running'} — start it and reopen the terminal.\x1b[0m`);
+            return;
+          }
           // tmux keeps the session alive — reconnect and it redraws
           term.writeln(`\r\n\x1b[33mDisconnected — reconnecting…\x1b[0m`);
           reconnectTimer.current = setTimeout(() => {
@@ -251,8 +259,10 @@ export default function TerminalTab({ instanceId, visible }) {
 
         ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
 
-        term.onData((data) => { if (ws.readyState === 1) ws.send(data); });
       };
+      // One input handler for the tab's lifetime (it used to be added again on
+      // every reconnect); always writes to the current socket.
+      term.onData((data) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(data); });
       connect();
 
       // Resize observer

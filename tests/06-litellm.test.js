@@ -66,7 +66,10 @@ describe('LiteLLM Integration', () => {
       }
     });
 
-    it('should rotate key if LiteLLM is available', { skip: !litellmAvailable }, async () => {
+    // The skip must be decided at run time: `{ skip: !litellmAvailable }` was
+    // evaluated at collection time, before before() set the flag → always skipped.
+    it('should rotate key if LiteLLM is available', async (t) => {
+      if (!litellmAvailable) { t.skip('LiteLLM not available'); return; }
       const result = await api(`/api/instances/${instanceId}/litellm/rotate`, { method: 'POST' });
       assert.equal(result.status, 200);
       assert.ok(result.json.key, 'Expected new key');

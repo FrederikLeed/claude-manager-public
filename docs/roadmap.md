@@ -2,7 +2,7 @@
 
 > **Status as of 2026-05-22** — Phase 1 (MVP), much of Phase 2
 > (observability), and the network-policy work originally planned as
-> Phase 3.5 are all shipped (port 3002, `docker-compose.yml`).
+> Phase 3.5 are all shipped (host port 3000 → container 3002, `docker-compose.yml`).
 > Implementation differs slightly from what's described below — the
 > design notes are kept for context, but see
 > [architecture.md](architecture.md) and [brief.md](../brief.md) for
@@ -469,6 +469,47 @@ Implementation:
   no restart required).
 - Use cases: shared coding standards, API conventions, project-wide
   instructions that apply to all instances.
+
+---
+
+## Backlog -- Egress enforcement outside the container (review C1–C3)
+
+**Status:** backlog (decided 2026-09-16, separate project).
+
+Today the egress lock is applied *inside* the container it is meant to contain:
+- **C1:** the `claude` user has passwordless sudo and restricted instances get `NET_ADMIN`, so an agent can `sudo iptables -F` or unset `HTTPS_PROXY` and bypass squid.
+- **C2:** the in-container firewall ACCEPTs all of 10/8, 172.16/12 and 192.168/16, so restricted instances reach sibling containers and the home LAN directly.
+- **C3:** there are no `ip6tables` rules; if the network gets IPv6, the restrictions don't apply there.
+
+Direction: enforce egress on the host/bridge instead. Options: a per-policy internal Docker network whose only way out is the proxy, or DOCKER-USER chain rules keyed by container. Then drop sudo and `NET_ADMIN` for restricted instances, allow only the proxy/manager/LiteLLM IPs, and fail closed on IPv6. While doing it, bind squid policy to a per-instance proxy credential instead of the container IP (OpenClaw-style), which removes the IP-reuse class of bugs.
+
+## Phase 5 -- OS-Level Containment (MXC) -- Future Direction
+
+Microsoft Build 2026 introduced **Microsoft Execution Containers (MXC)** — an
+OS-level, policy-driven agent sandbox in Windows/WSL with kernel-enforced
+isolation and per-agent Entra identity. It directly targets CM's containment
+plumbing (squid + iptables + per-container ACLs) and CM's biggest gap
+(per-instance identity / least-privilege creds). Full analysis:
+[`docs/mxc-vs-cm.md`](mxc-vs-cm.md).
+
+**Direction:** do NOT migrate — MXC is preview, Windows/Entra-locked, and its
+network-egress mechanism (CM's core `claude-only` guarantee) is undisclosed.
+Instead, build toward a **hybrid**: CM stays the fleet console (terminal,
+LLM routing, Claude-Code lifecycle) and delegates containment + identity to
+MXC enclaves once Microsoft ships a programmatic API.
+
+Gating items before building:
+- An **MXC provisioning API** (Build only showed Group Policy / Intune / a
+  prototype dashboard — not something CM can call per instance).
+- Confirmation that MXC can enforce **outbound allowlists** equivalent to
+  `claude-only` (promised for Windows Developer Day with the preview SDK).
+- A path that preserves CM's **model-agnostic, self-hosted** stance (Claude Max
+  + local Qwen3 + Azure Foundry) without mandating an Entra tenant.
+
+Until then: mine MXC + NVIDIA OpenShell for the **per-instance identity** and
+**single declarative policy surface** patterns — the two seams CM keeps
+deferring and that Build 2026 validated as the right problems. (Both OpenShell
+and OpenClaw, the runtimes CM was benchmarked against, are now MXC partners.)
 
 ---
 

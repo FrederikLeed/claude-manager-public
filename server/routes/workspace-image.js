@@ -1,5 +1,5 @@
 import {
-  getImageStatus, buildWorkspaceImage, fetchLatestClaudeVersion, setImageBroadcaster,
+  getImageStatus, buildWorkspaceImage, fetchLatestClaudeVersion,
 } from '../workspace-image.js';
 
 export default async function workspaceImageRoutes(fastify) {
@@ -34,5 +34,4 @@ export default async function workspaceImageRoutes(fastify) {
   });
 
   // Wire the WS broadcaster so build status can be pushed to clients
-  fastify.decorate('wireImageBroadcaster', (fn) => setImageBroadcaster(fn));
 }

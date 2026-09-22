@@ -125,6 +125,17 @@ describe('Workspace config lint', () => {
         );
       }
     });
+
+    it('should point auto memory at the per-instance mount', () => {
+      // Without this, Claude derives its memory directory from the startup
+      // directory inside the SHARED claude-home, so every instance reads and
+      // writes one memory folder (and each other's transcripts).
+      assert.equal(
+        settings.autoMemoryDirectory,
+        '/workspace/.claude/memory',
+        'autoMemoryDirectory must be the per-instance /workspace/.claude mount'
+      );
+    });
   });
 });
 

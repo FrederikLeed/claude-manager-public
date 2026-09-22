@@ -1,10 +1,50 @@
 import Docker from 'dockerode';
 import crypto from 'crypto';
-import { mkdirSync, readdirSync, readFileSync } from 'fs';
+import { chownSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { config } from './config.js';
 import { getAllInstances } from './db.js';
-import { LABELS, CONTAINER_PREFIX, VOLUME_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
+import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
+import { moduleLogger } from './logger.js';
+
+// The workspace image runs Claude Code as claude (1001:1001).
+const CLAUDE_UID = 1001;
+const CLAUDE_GID = 1001;
+
+const log = moduleLogger('docker');
+
+// Rotate instance stdout logs — Docker's json-file default is unbounded.
+export const INSTANCE_LOG_CONFIG = { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } };
+
+const MANAGER_URL = 'http://claude-manager:3002';
+
+// Env vars the manager owns and re-injects on every recreate (so rotating a
+// secret in .env reaches instances via "Update Claude"/recreate).
+const MANAGED_SECRET_PREFIXES = ['OP_SERVICE_ACCOUNT_TOKEN='];
+function managedSecretEnv() {
+  return config.OP_SERVICE_ACCOUNT_TOKEN ? [`OP_SERVICE_ACCOUNT_TOKEN=${config.OP_SERVICE_ACCOUNT_TOKEN}`] : [];
+}
+
+const SECRET_ENV_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL)/i;
+/** Mask values of secret-looking env vars before they leave the manager (API responses). */
+export function redactEnv(env = []) {
+  return env.map((e) => {
+    const i = e.indexOf('=');
+    if (i < 0) return e;
+    const name = e.slice(0, i);
+    return SECRET_ENV_NAME.test(name) && e.length > i + 1 ? `${name}=***` : e;
+  });
+}
+
+/**
+ * Container hostname for an instance: its slug (cm-<slug>-<id> → <slug>).
+ * Claude Code names Remote Control sessions after the hostname, so this makes
+ * them recognisable in the Claude app instead of a random container id.
+ */
+export function instanceHostname(containerName, id) {
+  const slug = (containerName || '').replace(/^\/?cm-/, '').replace(new RegExp(`-${id}$`), '');
+  return (slug || id || 'workspace').slice(0, 63).replace(/-+$/, '') || 'workspace';
+}
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
@@ -16,7 +56,7 @@ let _selfMounts = null;
  * by inspecting the manager's own bind mounts.
  * e.g. /claude-home → /host/path/to/data/claude-home
  */
-async function resolveHostPath(containerPath) {
+export async function resolveHostPath(containerPath) {
   if (!_selfMounts) {
     try {
       const hostname = (await import('os')).hostname();
@@ -108,13 +148,13 @@ async function learnMountTemplate() {
 
       if (sharedBinds.length > 0) {
         _mountTemplate = sharedBinds;
-        console.log(`[mount-learning] Learned ${sharedBinds.length} bind mounts from "${containerName}": ${sharedBinds.join(', ')}`);
+        log.info({ source: containerName, binds: sharedBinds }, 'learned shared bind mounts');
         return _mountTemplate;
       }
     } catch { /* container may be gone */ }
   }
 
-  console.log(`[mount-learning] No shared bind mounts found across ${allCandidates.length} candidate containers`);
+  log.warn({ candidates: allCandidates.length }, 'no shared bind mounts found to learn from');
   return [];
 }
 
@@ -323,13 +363,20 @@ export async function createInstance({ name, image, env = [], autoStart = false,
 
   // Per-instance project memory: <base>/<slug>/ → /workspace/.claude
   if (config.INSTANCE_MEMORY_BASE_DIR) {
-    // Pre-create the directory via the manager's own mount (/instance-memory)
+    // Pre-create the directory via the manager's own mount
+    // (/instance-memory), owned by the container's claude user: the manager
+    // runs as root, and a root-owned mount leaves Claude unable to write its
+    // memory there.
     try {
-      mkdirSync(`/instance-memory/${slug}`, { recursive: true });
-    } catch { /* may already exist */ }
+      mkdirSync(`/instance-memory/${slug}/memory`, { recursive: true });
+      chownSync(`/instance-memory/${slug}`, CLAUDE_UID, CLAUDE_GID);
+      chownSync(`/instance-memory/${slug}/memory`, CLAUDE_UID, CLAUDE_GID);
+    } catch (err) {
+      log.warn({ err: err.message, slug }, 'could not prepare per-instance memory directory');
+    }
     const instanceMemoryPath = `${config.INSTANCE_MEMORY_BASE_DIR}/${slug}`;
     binds.push(`${instanceMemoryPath}:/workspace/.claude`);
-    console.log(`[create-instance] Per-instance memory: ${instanceMemoryPath}`);
+    log.info({ containerName, instanceMemoryPath }, 'per-instance memory');
   }
 
   // Optionally mount Docker socket for container management access
@@ -337,16 +384,20 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     binds.push('/var/run/docker.sock:/var/run/docker.sock');
   }
 
-  console.log(`[create-instance] "${containerName}" binds: ${binds.join(', ')}`);
+  log.info({ containerName, binds, networkPolicy, llmBackend }, 'creating instance');
 
   // Build environment variables
   const proxyUrl = config.PROXY_URL || 'http://cm-proxy:3128';
   const containerEnv = [
+    // Keeps this instance's session transcripts (and Claude's default memory
+    // path) out of the shared claude-home project folder.
+    `CLAUDE_CODE_PROJECT_DIR_NAME=${slug}`,
     `PROJECT_NAME=${name || 'unnamed'}`,
     `PROJECT_SLUG=${slug}`,
     `CM_INSTANCE_ID=${id}`,
-    `CM_MANAGER_URL=http://claude-manager:3002`,
+    `CM_MANAGER_URL=${MANAGER_URL}`,
     `CM_NETWORK_POLICY=${networkPolicy || 'unrestricted'}`,
+    ...managedSecretEnv(),
     ...env,
   ];
 
@@ -363,8 +414,8 @@ export async function createInstance({ name, image, env = [], autoStart = false,
       `http_proxy=${proxyUrl}`,
       `https_proxy=${proxyUrl}`,
       // Don't proxy internal Docker network traffic
-      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
-      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
     );
   }
 
@@ -393,6 +444,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
       Binds: binds,
       NetworkMode: config.CLAUDE_NETWORK,
       RestartPolicy: { Name: 'unless-stopped' },
+      LogConfig: INSTANCE_LOG_CONFIG,
     };
 
     // NET_ADMIN needed for iptables lock (prevents proxy bypass)
@@ -402,6 +454,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
 
     container = await docker.createContainer({
       name: containerName,
+      Hostname: instanceHostname(containerName, id),
       Image: imageName,
       Env: containerEnv,
       Labels: {
@@ -416,6 +469,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
       HostConfig: hostConfig,
     });
   } catch (err) {
+    log.error({ err, containerName }, 'failed to create container');
     const error = new Error(`Failed to create container: ${err.message}`);
     error.statusCode = err.statusCode || 500;
     throw error;
@@ -467,6 +521,24 @@ export async function stopInstance(id, timeoutSeconds = 10) {
 export async function removeInstance(id, { removeVolume = false } = {}) {
   const container = await resolveContainer(id);
 
+  // Resolve the workspace volume name from the container's own mounts BEFORE
+  // removal. The volume is named cmv-<slug>-<id> at create time, but the slug
+  // isn't available here, so read the actual Name off the /workspace mount
+  // rather than reconstructing the name (which previously used the wrong
+  // prefix and silently orphaned every volume).
+  let volumeName = null;
+  if (removeVolume) {
+    try {
+      const inspect = await container.inspect();
+      const wsMount = (inspect.Mounts || []).find(
+        (m) => m.Type === 'volume' && m.Destination === '/workspace'
+      );
+      volumeName = wsMount?.Name || null;
+    } catch (err) {
+      if (err.statusCode !== 404) throw err;
+    }
+  }
+
   // Stop first if running
   try {
     await container.stop({ t: 5 });
@@ -476,8 +548,7 @@ export async function removeInstance(id, { removeVolume = false } = {}) {
 
   await container.remove({ force: true });
 
-  if (removeVolume) {
-    const volumeName = `${VOLUME_PREFIX}${id}`;
+  if (removeVolume && volumeName) {
     try {
       const volume = docker.getVolume(volumeName);
       await volume.remove();
@@ -713,35 +784,53 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     'NO_PROXY=', 'no_proxy=', 'GLOBAL_AGENT_', 'NETWORK_POLICY=', 'CM_NETWORK_POLICY=',
     // Refresh TZ from the manager on every recreate
     'TZ='];
-  const newEnv = (oldConfig.Env || []).filter((e) => !proxyVarPrefixes.some(p => e.startsWith(p)));
-  newEnv.push(`CM_NETWORK_POLICY=${newNetworkPolicy}`);
+  // Identity vars are re-asserted too: instances created by older manager
+  // versions lack CM_INSTANCE_ID/CM_MANAGER_URL, which disables autostart,
+  // cm-notify and cm-access inside them.
+  const identityPrefixes = ['CM_INSTANCE_ID=', 'CM_MANAGER_URL='];
+  const instanceId = oldLabels[LABELS.ID] || id;
+  const newEnv = (oldConfig.Env || []).filter((e) =>
+    !proxyVarPrefixes.some(p => e.startsWith(p))
+    && !MANAGED_SECRET_PREFIXES.some(p => e.startsWith(p))
+    && !identityPrefixes.some(p => e.startsWith(p)));
+  newEnv.push(
+    `CM_INSTANCE_ID=${instanceId}`, `CM_MANAGER_URL=${MANAGER_URL}`,
+    `CM_NETWORK_POLICY=${newNetworkPolicy}`, ...managedSecretEnv(),
+  );
   if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
 
   if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
     newEnv.push(
       `HTTP_PROXY=${proxyUrl}`, `HTTPS_PROXY=${proxyUrl}`,
       `http_proxy=${proxyUrl}`, `https_proxy=${proxyUrl}`,
-      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
-      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
     );
   }
 
   // Update labels
   const newLabels = { ...oldLabels, [LABELS.NETWORK_POLICY]: newNetworkPolicy };
 
-  // Stop and remove old container
+  log.info({ instanceId: id, container: oldName, image: newImage, networkPolicy: newNetworkPolicy, updateImage }, 'recreating instance');
+
+  // Create-before-destroy: park the old container under a temporary name,
+  // create the replacement, and only remove the old one once the new one is
+  // up. On failure the old container is restored (it used to be deleted first,
+  // so a failed create lost the instance).
   if (wasRunning) {
     try { await container.stop({ t: 5 }); } catch (err) {
       if (err.statusCode !== 304) throw err;
     }
   }
-  await container.remove({ force: true });
+  const parkedName = `${oldName}-replaced-${Date.now()}`;
+  await container.rename({ name: parkedName });
 
   // Create replacement container with same config
   const hostConfig = {
     Binds: newBinds,
     NetworkMode: oldHostConfig.NetworkMode || config.CLAUDE_NETWORK,
     RestartPolicy: oldHostConfig.RestartPolicy || { Name: 'unless-stopped' },
+    LogConfig: INSTANCE_LOG_CONFIG,
   };
 
   // NET_ADMIN needed for iptables lock (prevents proxy bypass)
@@ -749,20 +838,27 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     hostConfig.CapAdd = ['NET_ADMIN'];
   }
 
-  const newContainer = await docker.createContainer({
-    name: oldName,
-    Image: newImage,
-    Env: newEnv,
-    Labels: newLabels,
-    Tty: oldConfig.Tty ?? true,
-    OpenStdin: oldConfig.OpenStdin ?? true,
-    HostConfig: hostConfig,
-  });
-
-  // Restart if it was running before
-  if (wasRunning) {
-    await newContainer.start();
+  let newContainer = null;
+  try {
+    newContainer = await docker.createContainer({
+      name: oldName,
+      Hostname: instanceHostname(oldName, oldLabels[LABELS.ID] || id),
+      Image: newImage,
+      Env: newEnv,
+      Labels: newLabels,
+      Tty: oldConfig.Tty ?? true,
+      OpenStdin: oldConfig.OpenStdin ?? true,
+      HostConfig: hostConfig,
+    });
+    if (wasRunning) await newContainer.start();
+  } catch (err) {
+    log.error({ err, instanceId: id, container: oldName }, 'recreate failed; restoring the previous container');
+    if (newContainer) await newContainer.remove({ force: true }).catch(() => {});
+    await container.rename({ name: oldName }).catch((e) => log.error({ err: e }, 'could not rename the previous container back'));
+    if (wasRunning) await container.start().catch((e) => log.error({ err: e }, 'could not restart the previous container'));
+    throw err;
   }
+  await container.remove({ force: true });
 
   const newInspect = await newContainer.inspect();
   return formatInspectInfo(newInspect);
@@ -881,7 +977,7 @@ function formatInspectInfo(inspect) {
     created: Math.floor(new Date(inspect.Created).getTime() / 1000),
     startedAt: inspect.State?.StartedAt,
     finishedAt: inspect.State?.FinishedAt,
-    env: inspect.Config?.Env || [],
+    env: redactEnv(inspect.Config?.Env || []),
     mounts: inspect.Mounts || [],
     networkSettings: inspect.NetworkSettings || {},
     dockerSocket: hasDockerSocket(inspect.Mounts),
@@ -910,9 +1006,13 @@ export function listPolicies() {
         const trimmed = line.trim();
         if (trimmed === 'allowed_hosts:') { inHosts = true; continue; }
         if (inHosts) {
+          // Comment/blank lines inside the list are allowed (section headings
+          // like "# npm"); they used to end the list, so every host after the
+          // first comment was silently dropped from the squid ACL.
+          if (trimmed === '' || trimmed.startsWith('#')) continue;
           if (!trimmed.startsWith('-')) { inHosts = false; continue; }
-          const host = trimmed.replace(/^-\s*/, '');
-          if (host && !host.startsWith('#')) hosts.push(host);
+          const host = trimmed.replace(/^-\s*/, '').replace(/\s+#.*$/, '').trim();
+          if (host) hosts.push(host);
         }
       }
 

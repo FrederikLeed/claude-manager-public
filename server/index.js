@@ -10,8 +10,8 @@ import fastifyCookie from '@fastify/cookie';
 import { config } from './config.js';
 import { initDb, syncWithDocker, closeDb } from './db.js';
 import { ensureNetwork, listManagedContainers } from './docker.js';
-import { registerAuthHooks } from './auth.js';
-import instanceRoutes, { stopEventStream } from './routes/instances.js';
+import { registerAuthHooks, normalizePath } from './auth.js';
+import instanceRoutes, { stopEventStream, broadcast } from './routes/instances.js';
 import terminalRoutes, { closeAllSessions, getActiveSessionCount } from './routes/terminal.js';
 import systemRoutes from './routes/system.js';
 import sharedRoutes from './routes/shared.js';
@@ -22,19 +22,44 @@ import policyRoutes from './routes/policies.js';
 import accessRequestRoutes from './routes/access-requests.js';
 import workspaceImageRoutes from './routes/workspace-image.js';
 import securityScanRoutes from './routes/security-scan.js';
+import connectivityCheckRoutes from './routes/connectivity-check.js';
 import { checkExpiredGrants } from './grants.js';
 import { syncAllACLs } from './proxy.js';
-import { initImageState, checkAndMaybeRebuild } from './workspace-image.js';
-import { scanAll } from './security-scan.js';
+import { initImageState, checkAndMaybeRebuild, setImageBroadcaster } from './workspace-image.js';
+import { scanAll, setScanBroadcaster } from './security-scan.js';
+import { lintPolicies, setConnectivityBroadcaster } from './connectivity-check.js';
+import { setLogger } from './logger.js';
+import { startHealthMonitor, stopHealthMonitor } from './health.js';
+import { startProxyLogWatcher, stopProxyLogWatcher } from './proxy-log.js';
+import { startIdleStop, stopIdleStop } from './idle-stop.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function start() {
   const fastify = Fastify({
     logger: {
-      level: process.env.LOG_LEVEL || 'info',
+      level: config.LOG_LEVEL,
+      redact: ['req.headers.cookie', 'req.headers.authorization', 'err.config.headers'],
     },
+    // Per-request logging is replaced by the onResponse hook below. The UI polls
+    // several endpoints, and logging every hit buried real events (a 7-day log hit 20 GB).
+    disableRequestLogging: true,
   });
+
+  // Log what matters: failures, slow calls and state-changing requests.
+  // Successful GET polling stays at debug (LOG_LEVEL=debug to see it).
+  fastify.addHook('onResponse', async (request, reply) => {
+    const status = reply.statusCode;
+    const ms = Math.round(reply.elapsedTime);
+    const entry = { method: request.method, url: request.url, status, ms, ip: request.ip };
+    if (status >= 500) request.log.error(entry, 'request failed');
+    else if (status >= 400) request.log.warn(entry, 'request rejected');
+    else if (ms >= config.SLOW_REQUEST_MS) request.log.warn(entry, 'slow request');
+    else if (request.method !== 'GET' && request.method !== 'HEAD') request.log.info(entry, 'request');
+    else request.log.debug(entry, 'request');
+  });
+
+  setLogger(fastify.log);
 
   // Register plugins
   await fastify.register(fastifyWebsocket);
@@ -55,7 +80,7 @@ async function start() {
 
   // SPA fallback — serve index.html for non-API routes
   fastify.setNotFoundHandler((request, reply) => {
-    if (request.url.startsWith('/api')) {
+    if (normalizePath(request.url).startsWith('/api')) {
       fastify.log.warn({ method: request.method, url: request.url }, 'API route not found');
       reply.code(404).send({ error: `Not found: ${request.method} ${request.url}` });
     } else {
@@ -87,10 +112,12 @@ async function start() {
   await fastify.register(accessRequestRoutes);
   await fastify.register(workspaceImageRoutes);
   await fastify.register(securityScanRoutes);
+  await fastify.register(connectivityCheckRoutes);
 
-  // Let the workspace-image + scan modules push status over the same WS channel
-  fastify.wireImageBroadcaster?.(fastify.accessRequestBroadcast);
-  fastify.wireScanBroadcaster?.(fastify.accessRequestBroadcast);
+  // Let the workspace-image, scan and connectivity modules push status over the dashboard WS channel
+  setImageBroadcaster(broadcast);
+  setScanBroadcaster(broadcast);
+  setConnectivityBroadcaster(broadcast);
 
   // Start grant expiry checker (every 60s)
   const grantCheckInterval = setInterval(() => {
@@ -124,6 +151,9 @@ async function start() {
     }
     closeAllSessions();
     stopEventStream();
+    stopHealthMonitor();
+    stopProxyLogWatcher();
+    stopIdleStop();
     closeDb();
   });
 
@@ -146,6 +176,17 @@ async function start() {
     await syncAllACLs();
     fastify.log.info('Proxy ACLs synced');
 
+    // Lint network policies: warn loudly if any restricted claude-* policy is
+    // missing a host Claude Code requires (stale allowlist = silent breakage).
+    const lint = lintPolicies();
+    if (!lint.ok) {
+      for (const v of lint.violations) {
+        fastify.log.warn(`Policy "${v.policy}" is missing required Claude hosts: ${v.missing.join(', ')} — Claude Code will fail on this policy`);
+      }
+    } else {
+      fastify.log.info('Network policy lint passed — all restricted claude-* policies allowlist required hosts');
+    }
+
     // Determine current/latest Claude Code version, then run a catch-up check
     // (rebuilds in the background only if npm has a newer version).
     await initImageState(fastify.log);
@@ -157,9 +198,12 @@ async function start() {
     // Continue anyway — Docker may not be available in dev without socket
   }
 
-  // Print registered routes for debugging
-  const routes = fastify.printRoutes({ commonPrefix: false });
-  fastify.log.info(`Registered routes:\n${routes}`);
+  // Background diagnostics: sidecar/ACL health checks + squid denial attribution
+  startHealthMonitor();
+  startProxyLogWatcher();
+  startIdleStop();
+
+  fastify.log.debug(`Registered routes:\n${fastify.printRoutes({ commonPrefix: false })}`);
 
   // Start server
   const port = config.NODE_ENV === 'development' ? config.DEV_PORT : config.PORT;

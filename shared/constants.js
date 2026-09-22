@@ -27,7 +27,6 @@ export const LABELS = {
 };
 
 export const CONTAINER_PREFIX = 'cm-instance-';
-export const VOLUME_PREFIX = 'cm-workspace-';
 
 export const WS_EVENTS = {
   INSTANCE_UPDATED: 'instance_updated',
@@ -42,12 +41,22 @@ export const WS_EVENTS = {
   WORKSPACE_IMAGE: 'workspace_image',
   // Security scan status + new-critical alerts
   SECURITY_SCAN: 'security_scan',
+  // Post-image-update connectivity smoke test + policy-lint alerts
+  CONNECTIVITY_CHECK: 'connectivity_check',
 };
 
 // Claude Code hook events that an instance reports to the manager
 export const INSTANCE_EVENTS = ['Stop', 'Notification'];
 
 export const NETWORK_POLICIES = ['claude-only', 'claude-github', 'claude-full-dev', 'unrestricted'];
+
+// Hosts Claude Code MUST reach to function. A restricted policy that omits any
+// of these silently breaks Claude Code (squid 403 -> ERR_BAD_REQUEST). The
+// policy lint asserts every restricted claude-* policy allowlists these. Keep
+// in sync as Anthropic's endpoints drift — e.g. the Claude Code v2.1.x move to
+// platform.claude.com that this guard was built to catch. The smoke test runs
+// the real `claude` binary so it ALSO catches drift to endpoints not listed here.
+export const REQUIRED_CLAUDE_HOSTS = ['api.anthropic.com', 'platform.claude.com'];
 
 export const LLM_BACKENDS = [
   { id: 'claude-max', name: 'Claude Max', description: 'Anthropic direct (requires claude login)' },
@@ -66,3 +75,12 @@ export const DEFAULT_EXPIRY_MS = {
   network_unrestricted: 24 * 60 * 60 * 1000,
   host_mount: 7 * 24 * 60 * 60 * 1000,
 };
+
+// Hostname allowed in a squid ACL: exact host, or a subdomain wildcard written
+// as ".example.com" / "*.example.com". Anything else (spaces, newlines, paths,
+// ports, IPs with ranges) is rejected — the value is written verbatim into a
+// squid config include, so a newline would inject a directive.
+export const ACL_HOST_RE = /^(\*\.|\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+export function isValidAclHost(host) {
+  return typeof host === 'string' && ACL_HOST_RE.test(host);
+}

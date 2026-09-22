@@ -23,6 +23,28 @@ describe('Workspace Image', () => {
     }
   });
 
+  it('should keep Claude memory per instance and writable', async () => {
+    // Regression: /instance-memory/<slug> used to be created root-owned, so
+    // Claude could not write there, and its memory fell back to the shared
+    // claude-home project folder.
+    const settings = await execInInstance(instanceId, 'cat /etc/claude-code/managed-settings.json');
+    assert.match(settings.json.output || '', /"autoMemoryDirectory":\s*"\/workspace\/\.claude\/memory"/);
+    const write = await execInInstance(instanceId, 'touch /workspace/.claude/memory/probe.md && rm /workspace/.claude/memory/probe.md && echo writable');
+    assert.match(write.json.output || '', /writable/, 'per-instance memory directory is not writable by the claude user');
+    const owner = await execInInstance(instanceId, 'stat -c %u /workspace/.claude /workspace/.claude/memory');
+    assert.equal((owner.json.output || '').trim().split(/\s+/).join(','), '1001,1001');
+  });
+
+  it('should keep session transcripts out of the shared project folder', async () => {
+    const name = await execInInstance(instanceId, 'echo $CLAUDE_CODE_PROJECT_DIR_NAME');
+    const slug = (name.json.output || '').trim();
+    assert.ok(slug && slug !== '-workspace', `expected a per-instance project directory name, got ${JSON.stringify(slug)}`);
+    // Claude writes transcripts to $CLAUDE_CONFIG_DIR/projects/<name>, so a
+    // per-instance name keeps them out of the shared "-workspace" folder.
+    const home = await execInInstance(instanceId, `echo $CLAUDE_CONFIG_DIR; ls -d /home/claude/.claude/projects/${slug} 2>/dev/null || echo not-created-yet`);
+    assert.doesNotMatch(home.json.output || '', /-workspace$/m, 'instance still uses the shared -workspace project folder');
+  });
+
   it('should have iptables installed', async () => {
     const result = await execInInstance(instanceId, 'which iptables');
     assert.equal(result.status, 200, `Exec failed: ${JSON.stringify(result.json)}`);

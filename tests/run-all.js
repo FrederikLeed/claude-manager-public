@@ -7,12 +7,17 @@
  * Tests create and destroy real Docker containers.
  */
 import { execFileSync } from 'child_process';
+import crypto from 'crypto';
 import { readdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const filter = process.argv[2];
+
+// One device token for the whole run: each file is a separate process, and only
+// the first registered device is auto-approved on a fresh test DB.
+process.env.TEST_DEVICE_TOKEN ||= `test-device-${crypto.randomUUID()}`;
 
 // Verify dev server is running
 const apiBase = process.env.TEST_API_BASE || 'http://localhost:3002';

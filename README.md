@@ -56,6 +56,36 @@ Everything Claude Manager gives the operator, on one page.
 - Time-bound (default 24 h) grants for `docker_socket` and `network_unrestricted`
 - Expired grants auto-stop the container; UI offers renew or recreate-without
 
+**Logging & diagnostics**
+- Structured JSON logs (pino, `LOG_LEVEL`); failures, slow calls (`SLOW_REQUEST_MS`) and state changes are logged, successful GET polling only at `debug`
+- Docker log rotation on every service and every instance (the manager log once reached 20 GB in a week)
+- Container lifecycle logged with exit codes (137 = killed, OOM called out)
+- **Health monitor** (`HEALTH_CHECK_INTERVAL_SECONDS`, default 300): warns when `cm-proxy`/`cm-litellm` are down or a restricted instance's squid ACL doesn't match its current IP — logged on change only; `GET /api/system/health[?refresh=1]`
+- **Egress denials** — squid denials are attributed to the instance that made them and logged (`module: egress`) + recorded in the activity log; `GET /api/system/egress-denials`
+- Access requests from **unrestricted** instances are rejected (409) with an explanation — the 403 came from the site, not a policy
+
+**Remote Control**
+- Shared settings enable `remoteControlAtStartup`, so every interactive Claude session appears in the Claude app
+- Instance containers use their slug as hostname, so Remote Control session names are recognisable
+- **Claude autostarts at boot** in the tmux session the web terminal attaches to, and **resumes the instance's previous session** after a restart/recreate (a `SessionStart` hook records the interactive session id in `/workspace/.cm-last-session` on the instance volume; headless `claude -p` runs are ignored). The web terminal is only needed for re-login or debugging. Disable per instance with `CM_AUTOSTART_CLAUDE=0`.
+
+**Idle stop**
+- Instances with no Claude activity (hook events, including Remote Control turns) and no open terminal for `IDLE_STOP_DAYS` (default 3; 0 = off) are stopped, never removed
+- Before stopping, the manager types a save-your-memory request into the Claude session and waits for its Stop event (or `IDLE_SAVE_TIMEOUT_MINUTES`, default 15). On the next start, Claude resumes the same session
+- `IDLE_STOP_INSTANCE_IDS` limits it to specific instances (rollout/testing)
+
+**Local reference library (`cm-knowledge`)**
+- A [knowledge-mcp](https://github.com/FrederikLeed/knowledge-mcp/tree/custom-providers) sidecar indexes Microsoft Learn repos, Home Assistant docs, AD/Entra security tool docs (BloodHound, PingCastle, Maester, Certipy, The Hacker Recipes, …) and DBU rule pages, so agents search locally instead of spending tokens on web fetches
+- Every instance registers it as the `knowledge` MCP server at boot (`CM_KNOWLEDGE_URL`, empty = off); the managed CLAUDE.md tells agents to search it before the web
+- Data (downloads + Bleve indexes) lives in the `knowledge-data` Docker volume (`KNOWLEDGE_DATA`; a Windows bind mount was too slow and failed some writes); weekly automatic updates; dashboard on http://localhost:8765 (no auth — private network only)
+
+**Secrets via 1Password**
+- The workspace image ships the `op` CLI; set `OP_SERVICE_ACCOUNT_TOKEN` in `.env` (a 1Password service account limited to the shared **Claude** vault) and the manager injects it into every instance, re-injecting it on recreate so rotation reaches them
+- A managed `/etc/claude-code/CLAUDE.md` in the image makes the **Claude** vault the one place secrets are exchanged: agents read what the user put there, store any secret they create or receive there (reporting only the item title), and never print or commit values (it also carries the `cm-access` network guidance)
+- Instance API responses mask secret-looking env values (`*TOKEN*`, `*KEY*`, `*SECRET*`, `*PASSWORD*`)
+- Restricted `claude-*` policies allowlist 1Password (`1password.com`, `1passwordusercontent.com`, `1passwordservices.com`)
+- Instances keep no plaintext secrets on disk: local files hold `op://Claude/...` references only
+
 **Timezone sync**
 - The manager propagates its `TZ` into every instance it creates/recreates, so in-container logs and timestamps match the operator's wall clock
 
@@ -64,7 +94,7 @@ Everything Claude Manager gives the operator, on one page.
 - Shared global Claude config (CLAUDE.md + settings + global memories)
 - Per-instance auth — each instance runs its own `claude login` (Max) and `gh auth login`
 - Shared storage at `/shared` for cross-instance files and uploads
-- Everything in `data/` — git-tracked for backup
+- `data/` is the git-backed backup for config and memory (`instance-memory/`, `claude-home/CLAUDE.md` + `settings.json`); runtime data, secrets and `shared/` files are ignored
 
 ### How It Differs from Native Claude Code
 
@@ -155,6 +185,15 @@ cm-access --poll
 ```
 
 Admins approve / deny in the dashboard. Policy upgrades recreate the container preserving the volume; extra hosts update the ACL in place without restart.
+
+### Connectivity guard
+
+Restricted policies break silently when Anthropic's endpoints drift and an allowlist goes stale — e.g. Claude Code v2.1.x moved to `platform.claude.com`, which old allowlists didn't include, so squid 403'd it and every restricted instance showed `Failed to connect … ERR_BAD_REQUEST`. Two layers catch this:
+
+- **Policy lint** — every restricted `claude-*` policy must allowlist the hosts in `REQUIRED_CLAUDE_HOSTS` (`shared/constants.js`). Runs at manager startup (logged) and as a test (`tests/11-policy-lint.test.js`), so a dropped host fails CI.
+- **Post-update smoke test** — right after the workspace image is rebuilt to a new Claude Code (the moment endpoints can change), the manager spins a throwaway instance on a restricted policy (`CONNECTIVITY_CHECK_POLICY`, default `claude-github`), runs the *real interactive* `claude` through squid, and checks it reaches Anthropic instead of erroring. A failure raises a desktop/toast alert naming the blocked host. Because it runs the real CLI, it catches drift even to endpoints not in the required list. Trigger manually with `POST /api/connectivity-check/run`; last result at `GET /api/connectivity-check`.
+
+> Note: the test uses interactive `claude`, **not** `claude -p` — headless mode skips the `platform.claude.com` startup preflight and would pass even when it's blocked.
 
 ---
 

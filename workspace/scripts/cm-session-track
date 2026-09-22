@@ -1,0 +1,24 @@
+#!/bin/bash
+# cm-session-track — Claude Code SessionStart hook (managed-settings.json).
+#
+# Records this instance's current interactive session id so cm-autostart can
+# resume it after a container restart/recreate. Stored on the instance's own
+# /workspace volume (kept on recreate). Not /workspace/.claude: when that is a
+# per-instance host bind it is root-owned and not writable. The shared
+# ~/.claude/projects dir can't be used either — `claude --continue` there would
+# pick up whichever instance ran last.
+#
+# Headless runs (`claude -p`, SDK) are skipped so a script can't replace the
+# session the user is working in. Never blocks Claude: always exit 0.
+set -uo pipefail
+
+[ "${CLAUDE_CODE_ENTRYPOINT:-}" = "cli" ] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+SESSION="$(jq -r '.session_id // empty' 2>/dev/null || true)"
+case "$SESSION" in
+  ''|*[!A-Za-z0-9-]*) exit 0 ;;
+esac
+
+printf '%s\n' "$SESSION" > /workspace/.cm-last-session 2>/dev/null || true
+exit 0

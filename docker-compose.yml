@@ -1,5 +1,14 @@
+# Docker's json-file driver never rotates by default; the manager log once grew
+# to 20 GB in a week. Every long-running service gets a size cap.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   claude-manager:
+    logging: *default-logging
     build: .
     container_name: claude-manager
     restart: unless-stopped
@@ -20,6 +29,9 @@ services:
     environment:
       - PORT=3002
       - TZ=${TZ:-UTC}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - HEALTH_CHECK_INTERVAL_SECONDS=${HEALTH_CHECK_INTERVAL_SECONDS:-300}
+      - IDLE_STOP_DAYS=${IDLE_STOP_DAYS:-3}
       - WORKSPACE_SRC_DIR=/workspace-src
       - IMAGE_UPDATE_INTERVAL_HOURS=${IMAGE_UPDATE_INTERVAL_HOURS:-24}
       - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
@@ -42,10 +54,13 @@ services:
       - LITELLM_KEY_FOUNDRY=${LITELLM_KEY_FOUNDRY:-}
       - LITELLM_KEY_FOUNDRY_LATEST=${LITELLM_KEY_FOUNDRY_LATEST:-}
       - LITELLM_DEFAULT_BUDGET=${LITELLM_DEFAULT_BUDGET:-20}
+      # 1Password service account (read-only, vault-scoped) injected into instances
+      - OP_SERVICE_ACCOUNT_TOKEN=${OP_SERVICE_ACCOUNT_TOKEN:-}
     networks:
       - claude-manager-net
 
   cm-proxy:
+    logging: *default-logging
     build: ./proxy
     container_name: cm-proxy
     restart: unless-stopped
@@ -55,11 +70,12 @@ services:
       - claude-manager-net
 
   cm-litellm:
+    logging: *default-logging
     build: ./litellm
     container_name: cm-litellm
     restart: unless-stopped
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"   # localhost only; instances use cm-litellm internally
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-litellm}@cm-litellm-db:5432/${POSTGRES_DB:-litellm}
@@ -74,11 +90,12 @@ services:
       - claude-manager-net
 
   cm-ollama:
+    logging: *default-logging
     image: ollama/ollama
     container_name: cm-ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434" # localhost only
     volumes:
       - ollama-data:/root/.ollama
     environment:
@@ -90,6 +107,7 @@ services:
       - claude-manager-net
 
   cm-litellm-db:
+    logging: *default-logging
     image: postgres:16-alpine
     container_name: cm-litellm-db
     restart: unless-stopped
@@ -104,6 +122,27 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - claude-manager-net
+
+  # Local reference library (knowledge-mcp fork with gitdocs + webpages
+  # providers). Instances reach it at http://cm-knowledge:8765/mcp; the
+  # dashboard is published on localhost only. No auth: private network only.
+  cm-knowledge:
+    logging: *default-logging
+    build: https://github.com/FrederikLeed/knowledge-mcp.git#custom-providers
+    image: ${KNOWLEDGE_IMAGE:-cm-knowledge:latest}
+    container_name: cm-knowledge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      # Downloads + search indexes (several GB). A Docker volume by default:
+      # a Windows bind mount (D:\knowledge-mcp) was too slow (listing datasets
+      # took > 2 min) and failed some writes. A host path here makes it a bind.
+      - ${KNOWLEDGE_DATA:-knowledge-data}:/data
     networks:
       - claude-manager-net
 
@@ -133,6 +172,7 @@ networks:
     driver: bridge
 
 volumes:
+  knowledge-data:
   claude-manager-data:
   proxy-acl:
   ollama-data:

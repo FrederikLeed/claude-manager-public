@@ -19,8 +19,11 @@ import path from 'path';
 import Docker from 'dockerode';
 import { config } from './config.js';
 import { listPolicies } from './docker.js';
+import { moduleLogger } from './logger.js';
+import { isValidAclHost } from '../shared/constants.js';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+const log = moduleLogger('proxy');
 const ACL_DIR = config.PROXY_ACL_DIR || '/proxy-acl';
 
 /**
@@ -54,13 +57,39 @@ function getPolicyHosts(policyName) {
 }
 
 /**
+ * Turn policy/approved hosts into squid dstdomain values. Pure — exported for tests.
+ *  - "example.com"                   → exact host only
+ *  - ".example.com" / "*.example.com" → example.com and all subdomains
+ * Hosts were all written as ".host" before, so an allowlisted host silently
+ * allowed every subdomain (e.g. attacker-controlled *.sentry.io projects).
+ * Invalid values are dropped (they'd be written verbatim into squid config).
+ * Entries covered by a wildcard are removed: squid 6 rejects "x" next to ".x".
+ */
+export function buildDstdomains(hosts, onInvalid = () => {}) {
+  const bad = [];
+  const norm = [];
+  for (const raw of hosts || []) {
+    if (!isValidAclHost(raw)) { bad.push(raw); continue; }
+    const h = String(raw).toLowerCase().replace(/^\*\./, '.');
+    if (!norm.includes(h)) norm.push(h);
+  }
+  if (bad.length) onInvalid(bad);
+  const wild = norm.filter((h) => h.startsWith('.')).map((h) => h.slice(1));
+  const coveredBy = (name, self) => wild.some((w) => w !== self && (name === w || name.endsWith(`.${w}`)));
+  return norm.filter((h) => (h.startsWith('.') ? !coveredBy(h.slice(1), h.slice(1)) : !coveredBy(h, null)));
+}
+
+/**
  * Write an ACL file for a container.
  * Returns true if written successfully.
  */
-export async function writeContainerACL(instanceId, { networkPolicy, extraHosts = [] }) {
-  const ip = await getContainerIP(instanceId);
+export async function writeContainerACL(instanceId, { networkPolicy, extraHosts = [], ip: ipOverride = null }) {
+  // ipOverride lets callers (e.g. the ephemeral connectivity smoke-test container,
+  // which deliberately lacks managed labels) supply the IP directly instead of
+  // resolving it from container labels.
+  const ip = ipOverride || await getContainerIP(instanceId);
   if (!ip) {
-    console.log(`[proxy] Cannot write ACL for ${instanceId}: no IP found (container may not be running)`);
+    log.warn({ instanceId, networkPolicy }, 'cannot write ACL: no IP found (container may not be running)');
     return false;
   }
 
@@ -74,19 +103,10 @@ export async function writeContainerACL(instanceId, { networkPolicy, extraHosts 
   if (isUnrestricted) {
     acl += `http_access allow src_${safeId}\n`;
   } else {
-    const allHosts = [...new Set([...baseHosts, ...extraHosts])];
-    // Deduplicate subdomains: if dr.dk is in the list, remove www.dr.dk (since .dr.dk covers it)
-    const deduped = allHosts.filter(h => {
-      const parts = h.split('.');
-      for (let i = 1; i < parts.length - 1; i++) {
-        const parent = parts.slice(i).join('.');
-        if (allHosts.includes(parent)) return false; // parent domain already covers this
-      }
-      return true;
-    });
+    const deduped = buildDstdomains([...baseHosts, ...extraHosts], (bad) =>
+      log.warn({ instanceId, bad }, 'dropped invalid host from ACL'));
     if (deduped.length > 0) {
-      // Use .domain to match domain + all subdomains (squid 6 doesn't allow both .x and x)
-      acl += `acl hosts_${safeId} dstdomain ${deduped.map(h => `.${h}`).join(' ')}\n`;
+      acl += `acl hosts_${safeId} dstdomain ${deduped.join(' ')}\n`;
       acl += `http_access allow src_${safeId} hosts_${safeId}\n`;
     }
     // Deny is handled by the default rule in squid.conf
@@ -94,7 +114,7 @@ export async function writeContainerACL(instanceId, { networkPolicy, extraHosts 
 
   const aclPath = path.join(ACL_DIR, `${safeId}.acl`);
   writeFileSync(aclPath, acl);
-  console.log(`[proxy] Wrote ACL for ${instanceId} (${ip}): ${isUnrestricted ? 'unrestricted' : `${(baseHosts?.length || 0) + extraHosts.length} hosts`}`);
+  log.info({ instanceId, ip, networkPolicy: networkPolicy || 'unrestricted', hosts: isUnrestricted ? 'all' : (baseHosts?.length || 0) + extraHosts.length }, 'wrote ACL');
   return true;
 }
 
@@ -103,32 +123,30 @@ export async function writeContainerACL(instanceId, { networkPolicy, extraHosts 
  * Reads the current ACL, merges new hosts, rewrites.
  */
 export async function addHostsToACL(instanceId, newHosts) {
-  const safeId = instanceId.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const aclPath = path.join(ACL_DIR, `${safeId}.acl`);
+  // Rebuild from the source of truth (policy label + approved requests) rather
+  // than parsing the ACL file back, which lost the exact/wildcard distinction.
+  const { LABELS } = await import('../shared/constants.js');
+  const containers = await docker.listContainers({
+    filters: { label: [`${LABELS.MANAGED}=true`, `${LABELS.ID}=${instanceId}`] },
+  });
+  const networkPolicy = containers[0]?.Labels?.[LABELS.NETWORK_POLICY] || 'unrestricted';
+  const extras = await approvedExtraHosts();
+  return writeContainerACL(instanceId, {
+    networkPolicy,
+    extraHosts: [...new Set([...(extras[instanceId] || []), ...newHosts])],
+  });
+}
 
-  let existingHosts = [];
-  let networkPolicy = 'unrestricted';
+async function approvedExtraHosts() {
+  const approved = {};
   try {
-    const content = readFileSync(aclPath, 'utf8');
-    // Extract policy from comment
-    const policyMatch = content.match(/policy: ([^\s)]+)/);
-    if (policyMatch) networkPolicy = policyMatch[1];
-
-    // Extract existing dstdomain hosts (strip leading . from .domain format)
-    const hostMatch = content.match(/dstdomain\s+(.+)/);
-    if (hostMatch) {
-      existingHosts = hostMatch[1].split(/\s+/).map(h => h.replace(/^\./, '')).filter(Boolean);
+    const { getDb } = await import('./db.js');
+    const rows = getDb().prepare("SELECT instance_id, requested_hosts FROM access_requests WHERE status = 'approved' AND requested_hosts IS NOT NULL").all();
+    for (const row of rows) {
+      (approved[row.instance_id] ||= []).push(...JSON.parse(row.requested_hosts));
     }
-  } catch {
-    // No existing ACL — will create fresh
-  }
-
-  const allExtra = [...new Set([...existingHosts, ...newHosts])];
-  // Get base policy hosts to filter them out of "extra"
-  const baseHosts = getPolicyHosts(networkPolicy) || [];
-  const extraOnly = allExtra.filter(h => !baseHosts.includes(h));
-
-  return writeContainerACL(instanceId, { networkPolicy, extraHosts: [...new Set([...extraOnly, ...newHosts])] });
+  } catch (err) { log.warn({ err: err.message }, 'could not load approved extras from DB'); }
+  return approved;
 }
 
 /**
@@ -139,7 +157,7 @@ export function removeContainerACL(instanceId) {
   const aclPath = path.join(ACL_DIR, `${safeId}.acl`);
   try {
     unlinkSync(aclPath);
-    console.log(`[proxy] Removed ACL for ${instanceId}`);
+    log.info({ instanceId }, 'removed ACL');
   } catch {
     // File may not exist
   }
@@ -152,18 +170,7 @@ export function removeContainerACL(instanceId) {
 export async function syncAllACLs() {
   const { LABELS } = await import('../shared/constants.js');
   try {
-    // Load approved extra hosts from DB
-    const { getDb } = await import('./db.js');
-    const approvedExtras = {};
-    try {
-      const db = getDb();
-      const rows = db.prepare("SELECT instance_id, requested_hosts FROM access_requests WHERE status = 'approved' AND requested_hosts IS NOT NULL").all();
-      for (const row of rows) {
-        const hosts = JSON.parse(row.requested_hosts);
-        if (!approvedExtras[row.instance_id]) approvedExtras[row.instance_id] = [];
-        approvedExtras[row.instance_id].push(...hosts);
-      }
-    } catch (err) { console.log(`[proxy] Could not load approved extras from DB: ${err.message}`); }
+    const approvedExtras = await approvedExtraHosts();
 
     const containers = await docker.listContainers({
       filters: { label: [`${LABELS.MANAGED}=true`] },
@@ -187,13 +194,13 @@ export async function syncAllACLs() {
         const id = f.replace('.acl', '');
         if (id !== 'default' && !activeIds.has(id)) {
           unlinkSync(path.join(ACL_DIR, f));
-          console.log(`[proxy] Cleaned stale ACL: ${f}`);
+          log.info({ file: f }, 'removed stale ACL');
         }
       }
     } catch { /* dir may not exist yet */ }
 
-    console.log(`[proxy] Synced ACLs for ${activeIds.size} running containers`);
+    log.info({ count: activeIds.size }, 'synced ACLs for running containers');
   } catch (err) {
-    console.error(`[proxy] Failed to sync ACLs: ${err.message}`);
+    log.error({ err }, 'failed to sync ACLs');
   }
 }

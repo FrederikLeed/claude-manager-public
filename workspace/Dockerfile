@@ -32,6 +32,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root user with FIXED uid/gid 1001 — workspace volumes and host binds are
+# owned by 1001. Created before any package that adds system groups (the
+# 1Password CLI creates 'onepassword-cli'), which would otherwise take gid 1001.
+RUN userdel -r ubuntu 2>/dev/null || true; \
+    groupadd -g 1001 claude \
+    && useradd -m -u 1001 -g 1001 -s /bin/bash claude \
+    && echo "claude ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && id claude
+
 # GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -46,6 +55,21 @@ RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /
     > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
+
+# 1Password CLI (op) — instances read secrets via a service account token
+# (OP_SERVICE_ACCOUNT_TOKEN, injected by the manager). Official apt repo + debsig policy.
+RUN curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" \
+      > /etc/apt/sources.list.d/1password.list \
+    && mkdir -p /etc/debsig/policies/AC2D62742012EA22 /usr/share/debsig/keyrings/AC2D62742012EA22 \
+    && curl -fsSL https://downloads.1password.com/linux/debian/debsig/1password.pol \
+      -o /etc/debsig/policies/AC2D62742012EA22/1password.pol \
+    && curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor -o /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg \
+    && apt-get update && apt-get install -y 1password-cli \
+    && rm -rf /var/lib/apt/lists/* \
+    && op --version
 
 # Node.js 22 LTS via NodeSource
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -73,9 +97,8 @@ ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/claude-code
 RUN npm install -g @anthropic-ai/claude-code@latest typescript ts-node https-proxy-agent \
     && rm -f /tmp/claude-code-latest.json
 
-# Create non-root user
-RUN useradd -m -s /bin/bash claude \
-    && echo "claude ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Fail the build if the claude user's ids drifted
+RUN test "$(id -u claude):$(id -g claude)" = "1001:1001"
 
 # Copy config files (strip CRLF in case git autocrlf converted them on Windows)
 COPY config/tmux.conf /home/claude/.tmux.conf
@@ -97,11 +120,19 @@ COPY scripts/cm-notify /usr/local/bin/cm-notify
 RUN sed -i 's/\r$//' /usr/local/bin/cm-notify \
     && chmod +x /usr/local/bin/cm-notify
 
+# Boot-time Claude autostart + per-instance session tracking (resume after restart)
+COPY scripts/cm-autostart scripts/cm-session-track /usr/local/bin/
+RUN sed -i 's/\r$//' /usr/local/bin/cm-autostart /usr/local/bin/cm-session-track \
+    && chmod +x /usr/local/bin/cm-autostart /usr/local/bin/cm-session-track
+
 # Managed Claude Code settings — highest precedence, NOT overridden by a
 # bind-mount over /home/claude/.claude. Registers the cm-notify Stop/Notification
 # hooks for every session in this image.
 COPY config/managed-settings.json /etc/claude-code/managed-settings.json
-RUN sed -i 's/\r$//' /etc/claude-code/managed-settings.json
+# Managed CLAUDE.md — loaded into every session (1Password + network guidance).
+# The shared ~/.claude mount can't carry it: it's per-host and not in the repo.
+COPY config/CLAUDE.md /etc/claude-code/CLAUDE.md
+RUN sed -i 's/\r$//' /etc/claude-code/managed-settings.json /etc/claude-code/CLAUDE.md
 
 # Global git pre-commit hook — blocks committing secrets (gitleaks) in every repo
 COPY scripts/git-pre-commit /etc/git-hooks/pre-commit

@@ -35,6 +35,37 @@ Keep it concise. Aim for something a new team member could read in 2 minutes and
 
 After updating `brief.md`, commit and push it with your other changes. It is a normal part of the repo, not a separate step.
 
+## GitHub Auth (gh device flow)
+
+When `gh` is not authenticated, do the device flow yourself. Do NOT ask the user to run it, do NOT suggest `! gh auth login`, do NOT offer options, do NOT try to drive `gh auth login` through a pty/FIFO — its TUI prompts ignore piped input and hang forever.
+
+Drive GitHub's device flow directly with curl, then hand the token to `gh`. Three steps:
+
+1. Request the device code:
+```bash
+curl -s -X POST https://github.com/login/device/code \
+  -H "Accept: application/json" \
+  -d "client_id=178c6fc778ccc68e1d6a" \
+  -d "scope=repo read:org gist"
+```
+(`178c6fc778ccc68e1d6a` is the GitHub CLI's public OAuth client ID.)
+
+2. Print the `user_code` to the user immediately, along with https://github.com/login/device. They enter it in the browser.
+
+3. Poll for the token in the background and store it:
+```bash
+curl -s -X POST https://github.com/login/oauth/access_token \
+  -H "Accept: application/json" \
+  -d "client_id=178c6fc778ccc68e1d6a" \
+  -d "device_code=$DEVICE_CODE" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:device_code"
+```
+Poll at the returned `interval` (5s). Treat `authorization_pending` and `slow_down` as keep-waiting; any other `error` is fatal. On success pipe `access_token` into `gh auth login --with-token`, then `gh config set git_protocol https`, then confirm with `gh auth status`.
+
+Expected result: authenticated on github.com, scopes `gist`, `read:org`, `repo`, HTTPS git protocol.
+
+This is the fixed procedure and it works every time. Follow it without asking.
+
 ## Network Access
 
 This workspace has network access managed via proxy. You can access ANY host on the internet — you just need to request approval first if it's not already in your allowlist. Always attempt requests normally first — use `curl`, `WebFetch`, `npm install`, etc. as you normally would. Blocked requests fail instantly with HTTP 403 (no timeouts), so there is no cost to trying.

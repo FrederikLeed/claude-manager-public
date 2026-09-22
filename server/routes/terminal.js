@@ -1,5 +1,8 @@
 import { createPTY, getContainer, execInContainer } from '../docker.js';
 
+// WebSocket close codes the client treats as final (no reconnect)
+export const TERMINAL_CLOSE = { NOT_FOUND: 4404, NOT_RUNNING: 4409 };
+
 // Active terminal sessions — tracked for cleanup on shutdown
 const activeSessions = new Map();
 
@@ -15,6 +18,14 @@ let resizeTimers = new WeakMap();
  */
 export function getActiveSessionCount() {
   return activeSessions.size;
+}
+
+/** Whether any browser terminal is attached to this instance right now. */
+export function hasOpenTerminal(instanceId) {
+  for (const session of activeSessions.values()) {
+    if (session.instanceId === instanceId) return true;
+  }
+  return false;
 }
 
 /**
@@ -38,17 +49,23 @@ export default async function terminalRoutes(fastify) {
     const { id } = request.params;
     const sessionId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-    // Verify container exists and is running
-    const container = await getContainer(id);
+    // Verify container exists and is running. Rejections use distinct close
+    // codes so the client stops reconnecting (it used to retry ~1/s forever).
+    let container = null;
+    try {
+      container = await getContainer(id);
+    } catch (err) {
+      if (err.statusCode !== 404) throw err;
+    }
     if (!container) {
       socket.send(JSON.stringify({ error: 'Instance not found' }));
-      socket.close();
+      socket.close(TERMINAL_CLOSE.NOT_FOUND, 'instance not found');
       return;
     }
 
     if (container.state !== 'running') {
       socket.send(JSON.stringify({ error: 'Instance is not running' }));
-      socket.close();
+      socket.close(TERMINAL_CLOSE.NOT_RUNNING, 'instance not running');
       return;
     }
 
@@ -101,12 +118,18 @@ export default async function terminalRoutes(fastify) {
     // to /tmp/.tmux-clipboard): poll that file and forward it. Instances on the new
     // image never write the file, so this is a no-op for them. Remove once all
     // instances are recreated onto the new image.
-    let lastClip = '';
-    const clipPoll = setInterval(async () => {
+    // Prime with the file's current content so a (re)connect doesn't push an old
+    // copy to the browser clipboard, and skip polling entirely on the new image.
+    const clipState = await execInContainer(id,
+      'grep -q "set-clipboard on" ~/.tmux.conf 2>/dev/null && echo NEW; cat /tmp/.tmux-clipboard 2>/dev/null').catch(() => '');
+    const usesOsc52 = clipState.startsWith('NEW');
+    const clean = (raw) => raw.replace(/[\x00-\x08\x0e-\x1f]/g, '').replace(/^\s+/, '').replace(/\s+$/, '');
+    let lastClip = clean(clipState.replace(/^NEW\n?/, ''));
+    const clipPoll = usesOsc52 ? null : setInterval(async () => {
       if (socket.readyState !== 1) return;
       try {
         const raw = await execInContainer(id, 'cat /tmp/.tmux-clipboard 2>/dev/null');
-        const text = raw.replace(/[\x00-\x08\x0e-\x1f]/g, '').replace(/^\s+/, '').replace(/\s+$/, '');
+        const text = clean(raw);
         if (text && text !== lastClip) {
           lastClip = text;
           socket.send(JSON.stringify({ type: 'clipboard', data: text }));

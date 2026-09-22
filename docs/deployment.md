@@ -92,7 +92,7 @@ plus 5-7 concurrent workspace instances.
 
 ### Network
 
-- Manager: **3002** (mapped 3002 → 3002 inside the container)
+- Manager: **3000** on the host (mapped 3000 → 3002 inside the container)
 - LiteLLM: 4000 (only needed if you talk to it from outside Docker)
 - Ollama: 11434 (only needed for direct access)
 
@@ -258,7 +258,7 @@ terminals. Any reverse proxy must pass WebSocket upgrade headers.
 
 ```nginx
 upstream claude-manager {
-    server 127.0.0.1:3002;
+    server 127.0.0.1:3000;
 }
 
 server {
@@ -507,7 +507,7 @@ equivalent Docker access. Defence in depth:
 - Bind to localhost only if access is local:
   ```yaml
   ports:
-    - "127.0.0.1:3002:3002"
+    - "127.0.0.1:3000:3002"
   ```
 
 ### Container isolation

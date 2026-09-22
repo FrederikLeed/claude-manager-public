@@ -2,6 +2,7 @@ name: claude-github
 description: Anthropic API + GitHub — for repo-bound coding tasks
 allowed_hosts:
   - api.anthropic.com
+  - platform.claude.com
   - statsig.anthropic.com
   - sentry.io
   - github.com
@@ -10,3 +11,7 @@ allowed_hosts:
   - objects.githubusercontent.com
   - gist.githubusercontent.com
   - ssh.github.com
+  # 1Password (op CLI, service account for the Claude vault) — subdomain wildcards
+  - .1password.com
+  - .1passwordusercontent.com
+  - .1passwordservices.com

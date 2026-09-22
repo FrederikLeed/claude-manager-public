@@ -102,7 +102,7 @@ See [docs/deployment.md](docs/deployment.md) for full deployment guide.
 docker compose --profile test run --rm test
 ```
 
-11 test files, uses real Docker containers. Static config-lint (`tests/00-config-lint.test.js`) runs without Docker.
+13 test files, uses real Docker containers (`tests/12-diagnostics.test.js` is pure unit tests, no server). Static config-lint (`tests/00-config-lint.test.js`) runs without Docker.
 
 ## Roadmap
 

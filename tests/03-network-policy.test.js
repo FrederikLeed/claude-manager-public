@@ -52,6 +52,30 @@ describe('Network Egress Policy', () => {
       assert.ok(details.json.networkPolicy === 'unrestricted' || !details.json.networkPolicy,
         'Expected unrestricted or no network policy');
     });
+
+    // Regression: agents on unrestricted instances misread site 403s as policy
+    // blocks, filed access requests, and waited for approvals that change nothing.
+    it('should reject access requests from an unrestricted instance (409)', async () => {
+      const res = await api(`/api/instances/${instanceId}/request-access`, {
+        method: 'POST',
+        body: { hosts: ['example.com'], reason: 'regression test' },
+      });
+      assert.equal(res.status, 409);
+      assert.match(res.json.error, /unrestricted/);
+    });
+
+    it('should report the policy in the /access endpoint', async () => {
+      const res = await api(`/api/instances/${instanceId}/access`);
+      assert.equal(res.status, 200);
+      assert.equal(res.json.policy, 'unrestricted');
+      assert.equal(res.json.unrestricted, true);
+    });
+
+    it('should name the container hostname after the instance slug', async () => {
+      const res = await execInInstance(instanceId, 'hostname');
+      assert.equal(res.status, 200);
+      assert.match(res.json.output, /test-policy-unrestricted/);
+    });
   });
 
   describe('Create with claude-github policy', () => {
@@ -85,6 +109,28 @@ describe('Network Egress Policy', () => {
       assert.ok(result.status === 200, `Exec failed: ${JSON.stringify(result.json)}`);
       const output = result.json?.output?.trim();
       assert.ok(output && output !== '000', `Expected HTTP response code, got "${output}" — connection may have been blocked`);
+    });
+
+    // Negative control for the unrestricted 409: restricted instances can still request access
+    it('should accept access requests from a restricted instance', async () => {
+      const res = await api(`/api/instances/${instanceId}/request-access`, {
+        method: 'POST',
+        body: { hosts: ['example.org'], reason: 'regression test' },
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.json.status, 'pending');
+      const access = await api(`/api/instances/${instanceId}/access`);
+      assert.equal(access.json.policy, 'claude-github');
+    });
+
+    // C4 regression: a newline in a host used to inject a squid directive
+    it('should reject access requests with invalid hostnames', async () => {
+      const res = await api(`/api/instances/${instanceId}/request-access`, {
+        method: 'POST',
+        body: { hosts: ['evil.com\nhttp_access allow all'], reason: 'regression test' },
+      });
+      assert.equal(res.status, 400);
+      assert.match(res.json.error, /Invalid hostname/);
     });
 
     it('should block curl to example.com', async () => {

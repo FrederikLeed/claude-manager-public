@@ -3,7 +3,7 @@
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { api, sleep } from './helpers.js';
+import { api, sleep, TEST_DEVICE_TOKEN } from './helpers.js';
 
 describe('Auth system', () => {
   // Use a unique DB, so tests don't conflict with existing dev state.
@@ -21,7 +21,7 @@ describe('Auth system', () => {
     it('should register a device and return deviceId', async () => {
       const result = await api('/api/auth/register', {
         method: 'POST',
-        body: { token: 'first-device-token-for-testing-001', name: 'First Device' },
+        body: { token: TEST_DEVICE_TOKEN, name: 'First Device' },
       });
       assert.equal(result.status, 200);
       assert.ok(result.json.deviceId);
@@ -84,6 +84,21 @@ describe('Auth system', () => {
         cookie: 'invalid=nothing',
       });
       assert.equal(result.status, 200);
+    });
+
+    // Regression: the auth hook gated on the raw request.url, but Fastify routes
+    // on the decoded path — so "/%61pi/..." (= "/api/...") skipped auth while
+    // still hitting the handler. Must be blocked, not served.
+    it('should block percent-encoded /api path without auth', async () => {
+      const result = await api('/%61pi/instances', { cookie: 'invalid=nothing' });
+      assert.equal(result.status, 401);
+    });
+
+    it('should block double-encoded /api path without auth', async () => {
+      const result = await api('/%2561pi/instances', { cookie: 'invalid=nothing' });
+      // Either rejected by auth (401) or not routed to the handler (404) —
+      // never 200 with handler data.
+      assert.notEqual(result.status, 200);
     });
   });
 });

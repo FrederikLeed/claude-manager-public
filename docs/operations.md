@@ -1,7 +1,7 @@
 # Claude Manager — Operations Guide
 
 Day-to-day operations guide for the dashboard. The dashboard runs
-on port **3002** (`docker-compose.yml`). For prerequisites and
+on host port **3000** (container port 3002) (`docker-compose.yml`). For prerequisites and
 initial setup, see [deployment.md](deployment.md); for the design
 behind these features, see [architecture.md](architecture.md).
 
@@ -316,7 +316,7 @@ Recent lifecycle events with relative timestamps (last 50 in SQLite).
 
 ## 9. Multi-device access and device authentication
 
-Open `http://<host>:3002` from any device on the network. **TOFU device
+Open `http://<host>:3000` from any device on the network. **TOFU device
 authentication** is on by default — the cookie *is* the credential.
 
 ### First-time setup
@@ -344,7 +344,7 @@ If you lose every admin device:
 1. Set `ADMIN_RESET_TOKEN=<long-random>` in `.env`.
 2. Restart the manager.
 3. From a fresh browser, visit
-   `http://<host>:3002/?reset_token=<long-random>` — that device is
+   `http://<host>:3000/?reset_token=<long-random>` — that device is
    registered as a new admin.
 4. Clear `ADMIN_RESET_TOKEN` from `.env` after recovery.
 
@@ -369,6 +369,27 @@ out.
 ---
 
 ## 11. Monitoring
+
+### Logs
+
+`docker logs claude-manager` is structured JSON (pino). Useful filters:
+
+```bash
+docker logs claude-manager 2>&1 | grep '"level":[45]0'        # warnings + errors only
+docker logs claude-manager 2>&1 | grep '"module":"egress"'     # squid denials, per instance
+docker logs claude-manager 2>&1 | grep '"module":"health"'     # sidecar / ACL drift findings
+docker logs claude-manager 2>&1 | grep '"action":"die"'        # instance exits (exitCode)
+```
+
+- `LOG_LEVEL=debug` also logs every successful GET (the UI polls — noisy).
+- Requests slower than `SLOW_REQUEST_MS` (default 2000) are logged as `slow request`.
+- All services and instances rotate their Docker logs (20 MB × 5 for the stack, 10 MB × 3 per instance).
+- `cm-proxy` streams its access log (compact `cm` format) to `docker logs cm-proxy`; the manager follows it to attribute denials.
+
+### Health endpoints
+
+- `GET /api/system/health` — latest health-monitor report (`?refresh=1` runs it now). Checks: `cm-proxy` and `cm-litellm` running; every running restricted instance has an ACL whose IP matches the container's current IP and has `HTTPS_PROXY` set.
+- `GET /api/system/egress-denials` — last 200 squid denials with instance name, policy and host (repeats of the same instance+host within 10 min are counted, not re-logged).
 
 ### At a glance
 
@@ -431,7 +452,7 @@ On every startup:
 
 ### Continue work on another device
 
-1. Open `http://<host>:3002` on the other device — approve via the
+1. Open `http://<host>:3000` on the other device — approve via the
    admin panel.
 2. Find the instance, open its terminal — the tmux session resumes
    exactly where you left off.

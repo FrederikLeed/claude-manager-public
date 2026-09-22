@@ -48,6 +48,43 @@ if [ -n "${CM_NETWORK_POLICY:-}" ] && [ "$CM_NETWORK_POLICY" != "unrestricted" ]
     fi
 fi
 
+# Start Claude Code at boot in the tmux session the web terminal attaches to
+# (same socket/session name as server/docker.js createPTY). With
+# remoteControlAtStartup the session shows up in the Claude app without anyone
+# opening a terminal. Managed instances only; CM_AUTOSTART_CLAUDE=0 disables.
+if [ -n "${CM_INSTANCE_ID:-}" ] && [ "${CM_AUTOSTART_CLAUDE:-1}" != "0" ] && command -v tmux >/dev/null 2>&1; then
+    # ~/.claude.json is per container (not on the shared mount), so a fresh or
+    # recreated container would stop at the first-run onboarding screen.
+    CJ="$HOME/.claude.json"
+    if ! jq -e '.hasCompletedOnboarding == true' "$CJ" >/dev/null 2>&1; then
+        CC_VERSION="$(claude --version 2>/dev/null | awk '{print $1}')"
+        { [ -s "$CJ" ] && cat "$CJ" || echo '{}'; } | jq --arg v "${CC_VERSION:-}" \
+            '.hasCompletedOnboarding = true | .lastOnboardingVersion = $v
+             | .projects["/workspace"].hasTrustDialogAccepted = true' > "$CJ.tmp" 2>/dev/null \
+            && mv "$CJ.tmp" "$CJ" && chmod 600 "$CJ" \
+            || echo "[entrypoint] WARNING: could not seed $CJ" >&2
+    fi
+
+    # Local reference library (cm-knowledge). User-scope MCP config: managed
+    # settings only accept https:// MCP URLs, and ~/.claude.json is per
+    # container, so it is (re)applied on every boot. CM_KNOWLEDGE_URL="" disables.
+    KURL="${CM_KNOWLEDGE_URL-http://cm-knowledge:8765/mcp}"
+    if [ -n "$KURL" ]; then
+        jq --arg u "$KURL" '.mcpServers.knowledge = {type: "http", url: $u}' "$CJ" > "$CJ.tmp" 2>/dev/null \
+            && mv "$CJ.tmp" "$CJ" && chmod 600 "$CJ" \
+            || echo "[entrypoint] WARNING: could not register the knowledge MCP server" >&2
+    fi
+
+    if ! tmux -L cm has-session -t main 2>/dev/null; then
+        if tmux -L cm -f "$HOME/.tmux.conf" new-session -d -s main -c /workspace -x 200 -y 50; then
+            tmux -L cm send-keys -t main 'cm-autostart' Enter
+            echo "[entrypoint] Claude Code autostarted in tmux session 'main'"
+        else
+            echo "[entrypoint] WARNING: could not start tmux session for Claude autostart" >&2
+        fi
+    fi
+fi
+
 # Note: Node.js proxy bootstrap (https-proxy-agent) is activated via .bashrc
 # (entrypoint env doesn't persist to interactive shells started via terminal)
 

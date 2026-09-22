@@ -56,6 +56,15 @@ cmd_status() {
   access=$(curl -sf "${API}/instances/${INSTANCE}/access" 2>/dev/null) || true
 
   if [ -n "$access" ]; then
+    local current
+    current=$(echo "$access" | jq -r '.policy // "unknown"' 2>/dev/null)
+    echo "Network policy: ${current}"
+    if [ "$current" = "unrestricted" ]; then
+      echo "  Claude Manager is NOT filtering this instance's traffic."
+      echo "  A 403 or connection error comes from the remote site/network, not a policy —"
+      echo "  requesting access will not help."
+    fi
+    echo ""
     local approved_hosts
     approved_hosts=$(echo "$access" | jq -r '.approvedHosts[]?' 2>/dev/null)
     local approved_policies
@@ -112,27 +121,23 @@ cmd_request() {
   [ -n "$policy" ] || [ -n "$hosts" ] || die "Must specify --policy or --hosts"
   [ -n "$reason" ] || die "Must specify --reason"
 
-  local body='{'
-  local first=true
-  if [ -n "$policy" ]; then
-    body+="\"policy\":\"${policy}\""
-    first=false
-  fi
+  local json_hosts=null
   if [ -n "$hosts" ]; then
-    $first || body+=","
-    # Convert comma-separated to JSON array
-    local json_hosts
-    json_hosts=$(echo "$hosts" | jq -R 'split(",") | map(gsub("^ +| +$";""))')
-    body+="\"hosts\":${json_hosts}"
-    first=false
+    json_hosts=$(printf '%s' "$hosts" | jq -R 'split(",") | map(gsub("^ +| +$";""))')
   fi
-  body+=",\"reason\":\"${reason}\""
-  body+='}'
+  local body
+  body=$(jq -n --arg policy "$policy" --argjson hosts "$json_hosts" --arg reason "$reason" \
+    '{reason: $reason} + (if $policy != "" then {policy: $policy} else {} end) + (if $hosts != null then {hosts: $hosts} else {} end)')
 
-  local result
-  result=$(curl -sf -X POST "${API}/instances/${INSTANCE}/request-access" \
+  local result http
+  result=$(curl -s -w '\n%{http_code}' -X POST "${API}/instances/${INSTANCE}/request-access" \
     -H "Content-Type: application/json" \
-    -d "$body")
+    -d "$body") || die "Could not reach Claude Manager at ${MANAGER}"
+  http=$(echo "$result" | tail -n1)
+  result=$(echo "$result" | sed '$d')
+  if [ "$http" != "200" ]; then
+    die "$(echo "$result" | jq -r '.error // empty' 2>/dev/null || echo "HTTP ${http}") (HTTP ${http})"
+  fi
 
   local req_id
   req_id=$(echo "$result" | jq -r '.id')

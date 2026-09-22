@@ -7,10 +7,19 @@ import {
   logActivity,
   getInstance,
 } from '../db.js';
-import { recreateInstance } from '../docker.js';
+import { recreateInstance, getContainer } from '../docker.js';
 import { createGrantsForInstance } from '../grants.js';
 import { writeContainerACL, addHostsToACL } from '../proxy.js';
-import { NETWORK_POLICIES } from '../../shared/constants.js';
+import { NETWORK_POLICIES, isValidAclHost } from '../../shared/constants.js';
+import { broadcast } from './instances.js';
+
+async function currentPolicy(id) {
+  try {
+    return (await getContainer(id)).networkPolicy || 'unrestricted';
+  } catch {
+    return null; // unknown instance / Docker unavailable
+  }
+}
 
 export default async function accessRequestRoutes(fastify) {
   // --- Called from INSIDE containers (no device auth) ---
@@ -28,6 +37,29 @@ export default async function accessRequestRoutes(fastify) {
       return reply.code(400).send({ error: `Invalid policy. Must be one of: ${NETWORK_POLICIES.join(', ')}` });
     }
 
+    if (hosts !== undefined && hosts !== null) {
+      const bad = !Array.isArray(hosts) || hosts.length > 50 ? ['(hosts must be an array of at most 50 hostnames)']
+        : hosts.filter((h) => !isValidAclHost(h));
+      if (bad.length) {
+        request.log.warn({ instanceId: id, bad }, 'access request rejected: invalid hostnames');
+        return reply.code(400).send({ error: `Invalid hostname(s): ${bad.map((h) => JSON.stringify(h)).join(', ')}. Use plain hostnames like "example.com" or ".example.com" for subdomains.` });
+      }
+    }
+
+    // An unrestricted instance isn't behind the proxy, so approving would change
+    // nothing. Agents did this when a site itself returned 403 (bot protection),
+    // then waited up to 10 minutes for an approval that couldn't help.
+    const current = await currentPolicy(id);
+    if (current === 'unrestricted') {
+      request.log.warn({ instanceId: id, hosts, policy, reason }, 'access request from unrestricted instance rejected: not a policy block');
+      return reply.code(409).send({
+        error: 'This instance is unrestricted — Claude Manager is not blocking any host. '
+          + 'A 403/connection error here comes from the remote site or the network itself, not from a policy. '
+          + 'Do not wait for approval; investigate the failure directly.',
+        policy: current,
+      });
+    }
+
     const result = createAccessRequest({
       instanceId: id,
       requestedPolicy: policy || null,
@@ -36,6 +68,7 @@ export default async function accessRequestRoutes(fastify) {
     });
 
     const dbInst = getInstance(id);
+    request.log.info({ instanceId: id, instance: dbInst?.name, currentPolicy: current, requestedPolicy: policy, hosts, reason }, 'access requested');
     logActivity('access_requested', id, dbInst?.name, `Requested: ${policy || hosts?.join(', ')}${reason ? ` — ${reason}` : ''}`);
 
     // Broadcast to connected admin clients
@@ -65,7 +98,8 @@ export default async function accessRequestRoutes(fastify) {
     const approvedPolicies = requests
       .filter(r => r.status === 'approved' && r.requested_policy)
       .map(r => r.requested_policy);
-    return { approvedHosts, approvedPolicies, requests };
+    const policy = await currentPolicy(id);
+    return { policy, unrestricted: policy === 'unrestricted', approvedHosts, approvedPolicies, requests };
   });
 
   // --- Admin endpoints (device auth required via global hook) ---
@@ -161,9 +195,6 @@ export default async function accessRequestRoutes(fastify) {
   });
 }
 
-// Re-use the WebSocket clients from instances route
-function broadcastAccessRequest(fastify, data) {
-  // The instances route exports connectedClients via the WS events endpoint
-  // We piggyback on the same broadcast mechanism by emitting on the fastify instance
-  fastify.accessRequestBroadcast?.(data);
+function broadcastAccessRequest(_fastify, data) {
+  broadcast(data);
 }

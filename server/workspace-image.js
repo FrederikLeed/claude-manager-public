@@ -158,6 +158,14 @@ export async function buildWorkspaceImage(log, { reason = 'manual' } = {}) {
     if (built) setMeta(META_VERSION, built);
     setMeta(META_BUILT_AT, state.lastBuiltAt);
     log?.info(`Workspace image rebuilt — Claude Code ${built || 'unknown'}`);
+
+    // A new Claude Code is the moment its endpoints can change — run a
+    // connectivity smoke test against a restricted policy so stale allowlists
+    // (squid 403 -> ERR_BAD_REQUEST) surface now, not when a user hits them.
+    // Fire-and-forget: never let a check failure fail the rebuild itself.
+    import('./connectivity-check.js')
+      .then((m) => m.runSmokeTest(log, { reason: `image-update:${built || 'rebuild'}` }))
+      .catch((err) => log?.warn({ err: err.message }, 'post-rebuild connectivity check failed to start'));
     return { started: true, version: built };
   } catch (err) {
     state.lastError = err.message;

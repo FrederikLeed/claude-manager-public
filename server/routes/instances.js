@@ -32,7 +32,7 @@ import { getCurrentImageVersion } from '../workspace-image.js';
 import { getAllScanSummaries } from '../security-scan.js';
 import { createGrantsForInstance } from '../grants.js';
 import { isAvailable as litellmAvailable, createVirtualKey, deleteVirtualKey } from '../litellm.js';
-import { writeContainerACL, removeContainerACL } from '../proxy.js';
+import { writeContainerACL, removeContainerACL, syncAllACLs } from '../proxy.js';
 
 const connectedClients = new Set();
 let eventStream = null;
@@ -49,8 +49,6 @@ export default async function instanceRoutes(fastify) {
   // Start Docker event stream on plugin load
   startEventStream(fastify.log);
 
-  // Expose broadcast for access requests route
-  fastify.decorate('accessRequestBroadcast', (data) => broadcast(data));
 
   // --- REST endpoints ---
 
@@ -317,9 +315,10 @@ export default async function instanceRoutes(fastify) {
     }
     setInstanceClaudeVersion(id, getCurrentImageVersion());
 
-    // Re-assert the proxy ACL for the freshly created container
+    // Re-assert proxy ACLs for the freshly created container (full sync keeps
+    // approved extra hosts, which a bare writeContainerACL would drop)
     try {
-      await writeContainerACL(id, { networkPolicy: result.networkPolicy || 'unrestricted' });
+      await syncAllACLs();
     } catch { /* best effort */ }
 
     logActivity('updated', id, dbData?.name || id, `Claude Code → ${getCurrentImageVersion() || 'latest'}`);
@@ -426,7 +425,10 @@ function mergeInstances(dockerContainers, dbInstances) {
   });
 }
 
-function broadcast(data) {
+// Push an event to every dashboard WebSocket. Exported so other modules can use
+// it directly: decorators set inside these (encapsulated) route plugins are not
+// visible at the root, so the old decorate/wire hand-off silently did nothing.
+export function broadcast(data) {
   const message = typeof data === 'string' ? data : JSON.stringify(data);
   for (const client of connectedClients) {
     try {
@@ -437,25 +439,76 @@ function broadcast(data) {
   }
 }
 
+// Docker container events that change what the dashboard shows. Everything
+// else is ignored — in particular exec_create/exec_start/exec_die, which fire
+// for every `docker exec` (terminal clipboard poll, scans, cm-notify reads).
+// Broadcasting those made each open terminal trigger ~6 full instance-list
+// refetches per second in every browser tab.
+const LIFECYCLE_ACTIONS = new Set([
+  'create', 'start', 'restart', 'stop', 'die', 'kill', 'oom',
+  'pause', 'unpause', 'destroy', 'rename', 'update', 'health_status',
+]);
+
+export function isLifecycleAction(action) {
+  return LIFECYCLE_ACTIONS.has(String(action || '').split(':')[0]);
+}
+
+let aclResyncTimer = null;
+function scheduleAclResync(log) {
+  // A (re)started container may have a new IP and a stopped one frees its IP
+  // for reuse — keep squid ACLs keyed to the IPs that are live right now.
+  clearTimeout(aclResyncTimer);
+  aclResyncTimer = setTimeout(() => {
+    syncAllACLs().catch((err) => log.error({ err }, 'ACL resync after container event failed'));
+  }, 1500);
+}
+
 async function startEventStream(log) {
   try {
     eventStream = await getEventStream();
+    log.info('Docker event stream connected');
 
+    let pending = '';
     eventStream.on('data', (chunk) => {
-      try {
-        const event = JSON.parse(chunk.toString());
-        const managerId = event.Actor?.Attributes?.['claude-manager.id'];
-        if (!managerId) return;
+      // Events are newline-delimited JSON; a chunk may hold several or a partial one
+      pending += chunk.toString();
+      const lines = pending.split('\n');
+      pending = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let event;
+        try { event = JSON.parse(line); } catch { continue; }
+        const attrs = event.Actor?.Attributes || {};
+        const managerId = attrs['claude-manager.id'];
+        if (!managerId) continue;
 
-        const action = event.Action;
+        if (!isLifecycleAction(event.Action)) continue;
+        const action = String(event.Action).split(':')[0];
+
+        const ctx = { instanceId: managerId, instance: attrs['claude-manager.name'] || attrs.name, action };
+        if (action === 'die') {
+          ctx.exitCode = Number(attrs.exitCode);
+          // 0 = clean, 137 = SIGKILL (docker stop timeout / OOM / external kill), 143 = SIGTERM
+          log[ctx.exitCode === 0 || ctx.exitCode === 143 ? 'info' : 'warn'](ctx, `instance exited with code ${attrs.exitCode}`);
+        } else if (action === 'oom') {
+          log.error(ctx, 'instance hit its memory limit (OOM)');
+        } else if (action === 'kill') {
+          ctx.signal = attrs.signal;
+          log.info(ctx, `instance sent signal ${attrs.signal}`);
+        } else if (action === 'health_status') {
+          log.debug(ctx, event.Action);
+        } else {
+          log.info(ctx, `instance ${action}`);
+        }
+
+        if (action === 'start' || action === 'die') scheduleAclResync(log);
+
         let type;
         if (action === 'create') type = WS_EVENTS.INSTANCE_CREATED;
         else if (action === 'destroy') type = WS_EVENTS.INSTANCE_REMOVED;
         else type = WS_EVENTS.INSTANCE_UPDATED;
 
         broadcast({ type, id: managerId, action, timestamp: event.time });
-      } catch {
-        // Ignore malformed events
       }
     });
 

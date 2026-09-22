@@ -31,6 +31,17 @@ export function useInstances({ onNotify, onImageStatus, onScanEvent } = {}) {
     loadInstances().finally(() => setLoading(false));
   }, [loadInstances]);
 
+  // Coalesce bursts of WS events into one refetch. The list endpoint inspects
+  // every container, so refetching per event is expensive.
+  const refreshTimer = useRef(null);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      loadInstances();
+    }, 300);
+  }, [loadInstances]);
+
   // WebSocket connection
   useEffect(() => {
     function connect() {
@@ -56,8 +67,8 @@ export function useInstances({ onNotify, onImageStatus, onScanEvent } = {}) {
         if (data?.type === 'security_scan') {
           onScanEventRef.current?.(data);
         }
-        // On any event, re-fetch the full list for consistency (picks up usage)
-        loadInstances();
+        // Re-fetch the list for consistency (picks up usage, scans, updateAvailable)
+        scheduleRefresh();
       };
 
       ws.onclose = () => {
@@ -78,9 +89,10 @@ export function useInstances({ onNotify, onImageStatus, onScanEvent } = {}) {
 
     return () => {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [loadInstances]);
+  }, [scheduleRefresh]);
 
   const create = useCallback(async (opts) => {
     const result = await createInstance(opts);

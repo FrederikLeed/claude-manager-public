@@ -1,0 +1,41 @@
+#!/bin/bash
+# cm-autostart — start Claude Code in the instance's tmux session at boot.
+#
+# Typed into the tmux "main" window by entrypoint.sh, so it runs in a normal
+# interactive shell (aliases, proxy bootstrap from .bashrc) and leaves you at a
+# prompt when Claude exits. Resumes the session recorded by cm-session-track if
+# its transcript still exists, otherwise starts fresh.
+#
+# CM_CLAUDE_SETTINGS  optional JSON passed as --settings (e.g. to disable RC in tests)
+set -uo pipefail
+
+args=(--dangerously-skip-permissions)
+[ -n "${CM_CLAUDE_SETTINGS:-}" ] && args+=(--settings "$CM_CLAUDE_SETTINGS")
+
+LAST_FILE=/workspace/.cm-last-session
+if [ -f "$LAST_FILE" ]; then
+  id="$(tr -dc 'A-Za-z0-9-' < "$LAST_FILE")"
+  # Transcript dir is named after the cwd (/workspace → -workspace)
+  if [ -n "$id" ] && [ -f "$HOME/.claude/projects/-workspace/$id.jsonl" ]; then
+    echo "[cm-autostart] resuming session $id"
+    args+=(--resume "$id")
+  else
+    echo "[cm-autostart] previous session ${id:-?} not found — starting a new one"
+  fi
+fi
+
+# Retype a draft that idle-stop saved before stopping (never sent automatically).
+DRAFT_FILE=/workspace/.cm-draft
+if [ -s "$DRAFT_FILE" ] && [ -n "${TMUX:-}" ]; then
+  (
+    pane="${TMUX_PANE:-}"
+    for _ in $(seq 1 60); do
+      sleep 2
+      tmux capture-pane -p ${pane:+-t "$pane"} 2>/dev/null | grep -q 'shift+tab to cycle' && break
+    done
+    sleep 2
+    tmux send-keys ${pane:+-t "$pane"} -l "$(cat "$DRAFT_FILE")" && rm -f "$DRAFT_FILE"
+  ) >/dev/null 2>&1 &
+fi
+
+cd /workspace && claude "${args[@]}"

@@ -1,16 +1,36 @@
 {
+  "autoMemoryDirectory": "/workspace/.claude/memory",
   "hooks": {
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "/usr/local/bin/cm-notify", "timeout": 15 }
+          {
+            "type": "command",
+            "command": "/usr/local/bin/cm-notify",
+            "timeout": 15
+          }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          { "type": "command", "command": "/usr/local/bin/cm-notify", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "/usr/local/bin/cm-notify",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/cm-session-track",
+            "timeout": 5
+          }
         ]
       }
     ]

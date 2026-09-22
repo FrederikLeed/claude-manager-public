@@ -1,6 +1,8 @@
 import { getDockerInfo, listManagedContainers } from '../docker.js';
 import { config } from '../config.js';
 import { getActivityLog } from '../db.js';
+import { getHealthReport, runHealthCheck } from '../health.js';
+import { getRecentDenials } from '../proxy-log.js';
 
 export default async function systemRoutes(fastify) {
   fastify.get('/api/system', async () => {
@@ -20,5 +22,15 @@ export default async function systemRoutes(fastify) {
 
   fastify.get('/api/system/activity', async () => {
     return getActivityLog(50);
+  });
+
+  // Latest health-monitor report; ?refresh=1 runs the checks now
+  fastify.get('/api/system/health', async (request) => {
+    return request.query?.refresh ? runHealthCheck() : getHealthReport();
+  });
+
+  // Recent squid denials, attributed to instances (newest first)
+  fastify.get('/api/system/egress-denials', async () => {
+    return getRecentDenials();
   });
 }

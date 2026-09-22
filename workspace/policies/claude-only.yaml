@@ -2,5 +2,10 @@ name: claude-only
 description: Anthropic API only — for customer-data work where the agent must not reach anywhere else
 allowed_hosts:
   - api.anthropic.com
+  - platform.claude.com
   - statsig.anthropic.com
   - sentry.io
+  # 1Password (op CLI, service account for the Claude vault) — subdomain wildcards
+  - .1password.com
+  - .1passwordusercontent.com
+  - .1passwordservices.com

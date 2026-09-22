@@ -1,4 +1,4 @@
-import { getScanStatus, scanAll, setScanBroadcaster } from '../security-scan.js';
+import { getScanStatus, scanAll } from '../security-scan.js';
 import { getInstanceScan } from '../db.js';
 
 export default async function securityScanRoutes(fastify) {
@@ -34,5 +34,4 @@ export default async function securityScanRoutes(fastify) {
     };
   });
 
-  fastify.decorate('wireScanBroadcaster', (fn) => setScanBroadcaster(fn));
 }

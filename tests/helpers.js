@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 /**
  * Shared test helpers for claude-manager v2 integration tests.
  * Uses the running v2 dev server at localhost:3002.
@@ -49,7 +50,12 @@ export async function api(path, options = {}) {
  * Uses a well-known token. If a device already exists from a prior session,
  * re-uses it. Otherwise registers fresh (first device = auto-admin).
  */
-export async function authenticate(token = 'first-device-token-for-testing-001') {
+// Per-run device token (TEST_DEVICE_TOKEN to pin one). A token committed to the
+// repo became a standing admin credential on any manager the tests ran against.
+export const TEST_DEVICE_TOKEN = process.env.TEST_DEVICE_TOKEN
+  || `test-device-${crypto.randomUUID()}`;
+
+export async function authenticate(token = TEST_DEVICE_TOKEN) {
   const result = await api('/api/auth/register', {
     method: 'POST',
     body: { token, name: 'Integration Test' },
