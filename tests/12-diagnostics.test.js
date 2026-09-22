@@ -257,30 +257,6 @@ describe('recreate / image regressions', () => {
   });
 });
 
-describe('knowledge library', () => {
-  // Managed settings reject http:// MCP URLs ("must use a valid https:// url"),
-  // and managed-mcp.json would take exclusive control of MCP servers.
-  it('is registered per container at boot (user scope), not via managed config', () => {
-    const settings = JSON.parse(read('workspace/config/managed-settings.json'));
-    assert.equal(settings.managedMcpServers, undefined);
-    assert.throws(() => read('workspace/config/managed-mcp.json'));
-    const entry = read('workspace/scripts/entrypoint.sh');
-    assert.match(entry, /KURL="\$\{CM_KNOWLEDGE_URL-http:\/\/cm-knowledge:8765\/mcp\}"/);
-    assert.match(entry, /\.mcpServers\.knowledge = \{type: "http", url: \$u\}/);
-  });
-  it('bypasses the proxy and is described to agents', () => {
-    assert.match(read('server/docker.js'), /NO_PROXY=localhost,127\.0\.0\.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,/);
-    assert.match(read('workspace/config/CLAUDE.md'), /Search it before WebSearch\/WebFetch/);
-  });
-  it('compose runs cm-knowledge with its data on a docker volume', () => {
-    const compose = read('docker-compose.yml');
-    assert.match(compose, /container_name: cm-knowledge/);
-    assert.match(compose, /\$\{KNOWLEDGE_DATA:-knowledge-data\}:\/data/);
-    assert.match(compose, /^  knowledge-data:$/m);
-    assert.match(compose, /"127\.0\.0\.1:8765:8765"/);
-  });
-});
-
 describe('idle stop pane safety', async () => {
   const { paneState } = await import('../server/idle-stop.js');
   const rule = '\u2500'.repeat(40);

@@ -414,8 +414,8 @@ export async function createInstance({ name, image, env = [], autoStart = false,
       `http_proxy=${proxyUrl}`,
       `https_proxy=${proxyUrl}`,
       // Don't proxy internal Docker network traffic
-      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
-      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
     );
   }
 
@@ -803,8 +803,8 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     newEnv.push(
       `HTTP_PROXY=${proxyUrl}`, `HTTPS_PROXY=${proxyUrl}`,
       `http_proxy=${proxyUrl}`, `https_proxy=${proxyUrl}`,
-      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
-      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net`,
+      `NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
+      `no_proxy=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net`,
     );
   }
 

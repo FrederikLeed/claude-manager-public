@@ -34,17 +34,6 @@ The 1Password vault **Claude** is the only place to exchange secrets with the us
 
 `.env.op` files hold references only, so they're safe to commit.
 
-## Reference library: `knowledge` MCP server
-
-A local, offline documentation library is available through the `knowledge` MCP server (`knowledge_search`, `knowledge_read`). Search it before WebSearch/WebFetch. It's faster, needs no network access, and returns only the parts you ask for.
-- Contents:
-  - Microsoft Learn: Entra, Windows Server, Defender, Azure, Microsoft 365, PowerShell, security/privileged access, support articles
-  - Home Assistant user and developer docs
-  - DBU football rules and regulations (Danish)
-- Use `knowledge_list_local` to see what's installed. Search, then `knowledge_read` the `ref`, with `section`/`offset` for long pages. Cite the document's URL.
-- Use the web when the library has nothing relevant or you need something newer than its weekly update.
-- Don't download, update or delete datasets unless the user asks; it's shared by all instances.
-
 ## Network
 
 Run `cm-access --status` when a request fails. If the policy is `unrestricted`, Claude Manager isn't blocking you: the error comes from the site or the network, so don't request access. On a restricted policy, request the host with `cm-access --request --hosts "<host>" --reason "<why>"`, then run `cm-access --poll`.

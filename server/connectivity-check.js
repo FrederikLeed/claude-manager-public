@@ -177,7 +177,7 @@ export async function runSmokeTest(log, { policy = config.CONNECTIVITY_CHECK_POL
         `cd /workspace; timeout -s KILL ${CLAUDE_RUN_SECONDS} script -qfc "${claudeCmd.replace(/"/g, '\\"')}" /tmp/cc.out >/dev/null 2>&1 </dev/null; cat /tmp/cc.out 2>/dev/null`],
       Env: [
         `HTTP_PROXY=${proxyUrl}`, `HTTPS_PROXY=${proxyUrl}`,
-        'NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,cm-knowledge,.claude-manager-net',
+        'NO_PROXY=localhost,127.0.0.1,claude-manager,cm-proxy,cm-litellm,.claude-manager-net',
         'NODE_PATH=/usr/lib/node_modules',
         'NODE_OPTIONS=-r /home/claude/.proxy-bootstrap.js',
       ],

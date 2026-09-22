@@ -125,27 +125,6 @@ services:
     networks:
       - claude-manager-net
 
-  # Local reference library (knowledge-mcp fork with gitdocs + webpages
-  # providers). Instances reach it at http://cm-knowledge:8765/mcp; the
-  # dashboard is published on localhost only. No auth: private network only.
-  cm-knowledge:
-    logging: *default-logging
-    build: https://github.com/FrederikLeed/knowledge-mcp.git#custom-providers
-    image: ${KNOWLEDGE_IMAGE:-cm-knowledge:latest}
-    container_name: cm-knowledge
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8765:8765"
-    environment:
-      - TZ=${TZ:-UTC}
-    volumes:
-      # Downloads + search indexes (several GB). A Docker volume by default:
-      # a Windows bind mount (D:\knowledge-mcp) was too slow (listing datasets
-      # took > 2 min) and failed some writes. A host path here makes it a bind.
-      - ${KNOWLEDGE_DATA:-knowledge-data}:/data
-    networks:
-      - claude-manager-net
-
   test:
     build:
       context: .
@@ -172,7 +151,6 @@ networks:
     driver: bridge
 
 volumes:
-  knowledge-data:
   claude-manager-data:
   proxy-acl:
   ollama-data:

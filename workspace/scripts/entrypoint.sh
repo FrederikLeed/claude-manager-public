@@ -65,16 +65,6 @@ if [ -n "${CM_INSTANCE_ID:-}" ] && [ "${CM_AUTOSTART_CLAUDE:-1}" != "0" ] && com
             || echo "[entrypoint] WARNING: could not seed $CJ" >&2
     fi
 
-    # Local reference library (cm-knowledge). User-scope MCP config: managed
-    # settings only accept https:// MCP URLs, and ~/.claude.json is per
-    # container, so it is (re)applied on every boot. CM_KNOWLEDGE_URL="" disables.
-    KURL="${CM_KNOWLEDGE_URL-http://cm-knowledge:8765/mcp}"
-    if [ -n "$KURL" ]; then
-        jq --arg u "$KURL" '.mcpServers.knowledge = {type: "http", url: $u}' "$CJ" > "$CJ.tmp" 2>/dev/null \
-            && mv "$CJ.tmp" "$CJ" && chmod 600 "$CJ" \
-            || echo "[entrypoint] WARNING: could not register the knowledge MCP server" >&2
-    fi
-
     if ! tmux -L cm has-session -t main 2>/dev/null; then
         if tmux -L cm -f "$HOME/.tmux.conf" new-session -d -s main -c /workspace -x 200 -y 50; then
             tmux -L cm send-keys -t main 'cm-autostart' Enter

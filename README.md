@@ -74,11 +74,6 @@ Everything Claude Manager gives the operator, on one page.
 - Before stopping, the manager types a save-your-memory request into the Claude session and waits for its Stop event (or `IDLE_SAVE_TIMEOUT_MINUTES`, default 15). On the next start, Claude resumes the same session
 - `IDLE_STOP_INSTANCE_IDS` limits it to specific instances (rollout/testing)
 
-**Local reference library (`cm-knowledge`)**
-- A [knowledge-mcp](https://github.com/FrederikLeed/knowledge-mcp/tree/custom-providers) sidecar indexes Microsoft Learn repos, Home Assistant docs, AD/Entra security tool docs (BloodHound, PingCastle, Maester, Certipy, The Hacker Recipes, …) and DBU rule pages, so agents search locally instead of spending tokens on web fetches
-- Every instance registers it as the `knowledge` MCP server at boot (`CM_KNOWLEDGE_URL`, empty = off); the managed CLAUDE.md tells agents to search it before the web
-- Data (downloads + Bleve indexes) lives in the `knowledge-data` Docker volume (`KNOWLEDGE_DATA`; a Windows bind mount was too slow and failed some writes); weekly automatic updates; dashboard on http://localhost:8765 (no auth — private network only)
-
 **Secrets via 1Password**
 - The workspace image ships the `op` CLI; set `OP_SERVICE_ACCOUNT_TOKEN` in `.env` (a 1Password service account limited to the shared **Claude** vault) and the manager injects it into every instance, re-injecting it on recreate so rotation reaches them
 - A managed `/etc/claude-code/CLAUDE.md` in the image makes the **Claude** vault the one place secrets are exchanged: agents read what the user put there, store any secret they create or receive there (reporting only the item title), and never print or commit values (it also carries the `cm-access` network guidance)
