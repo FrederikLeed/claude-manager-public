@@ -1,11 +1,12 @@
 # Claude Manager — Architecture
 
-A self-hosted web UI that runs as a Docker container and manages sibling
-Claude Code workspace containers on the same host, with per-container
+A self-hosted web UI that runs as a Docker container and manages Claude Code
+workspace containers **across a fleet of hosts**, with per-container
 **network policy enforcement** and a **pluggable LLM backend** per
 instance. For the design intent and current status, see
 [brief.md](../brief.md); for day-to-day usage, see
-[operations.md](operations.md).
+[operations.md](operations.md); for the fleet design and its limits, see
+[multi-host.md](multi-host.md) and [fleet-graph.md](fleet-graph.md).
 
 All diagrams below are generated from text sources in `docs/diagrams/`.
 Edit the source, re-render, commit both. The render commands live in
@@ -17,7 +18,9 @@ the README under "Diagram tooling".
 
 ![Architecture](diagrams/architecture.png)
 
-Six containers, one bridge network (`claude-manager-net`):
+Six long-running services on the manager's own host, one bridge network
+(`claude-manager-net`), plus the instance containers — which may live on this
+host or on any other registered one:
 
 | Container             | Image source           | Purpose                                                       |
 |-----------------------|------------------------|---------------------------------------------------------------|
@@ -26,12 +29,64 @@ Six containers, one bridge network (`claude-manager-net`):
 | `cm-litellm`          | `litellm/Dockerfile`   | LiteLLM proxy — routes Claude Code requests to Ollama / Azure |
 | `cm-ollama`           | `ollama/ollama` (NVIDIA) | Local inference — Qwen3 30B-A3B on the host GPU             |
 | `cm-litellm-db`       | `postgres:16-alpine`   | PostgreSQL for LiteLLM virtual-key state                      |
-| `cm-instance-*`       | `claude-workspace:latest` (`workspace/Dockerfile`) | Per-project Claude Code workspace containers |
+| `cm-<slug>-<id>`      | `claude-workspace:latest` (`workspace/Dockerfile`) | Per-project Claude Code workspace containers |
 
-The manager creates and tears down instance containers via
-`/var/run/docker.sock` (mounted) using the `dockerode` library. It does
-not run a Docker daemon — this is the standard Docker-out-of-Docker
-sibling-container pattern.
+The manager creates and tears down instance containers with `dockerode`, but
+**which daemon it talks to depends on the instance's host**. `dockerFor(hostId)`
+in `server/hosts.js` returns either the mounted-socket client for the seeded
+`local` row — the standard Docker-out-of-Docker sibling pattern — or a dockerode
+SSH client for a remote host, whose private key is read from a 1Password
+`op://` reference at connect time and never stored. Clients are cached and
+invalidated by `signatureOf(host)`, which covers kind, address, user, **port**
+and key reference.
+
+The manager still runs no Docker daemon of its own.
+
+### 1.1 Hosts and transport
+
+Every host the manager knows about is a row in `hosts`. The row `local` is
+seeded, means "the daemon whose socket is mounted", and cannot be deleted.
+
+| Column | Why it exists |
+|---|---|
+| `kind` | `local` or `ssh` — picks the transport |
+| `ssh_key_ref` | an `op://` reference; key material never reaches the database or a backup |
+| `data_root` | where this host keeps `shared/`, `claude-home/` and `instance-memory/` |
+| `manager_url` | what an instance here calls back to; for a remote host that is a LAN URL, so the callback leaves the Docker network |
+| `accepts_instances` | watched, but never scheduled onto — the production-host case |
+| `docker_engine_id` | learned on ping, so one daemon cannot be registered twice under two names |
+
+`pingHost()` records the daemon's reported name and engine id. Registering the
+same engine a second time is refused rather than silently double-counting it.
+
+**Placement.** `admit()` in `server/placement.js` is the single gate every
+creation passes through, and it refuses with a machine-readable `code` the API
+hands straight back:
+
+| Code | Status | Meaning |
+|---|---|---|
+| `unknown_host` | 404 | no such host |
+| `host_disabled` | 409 | registered but switched off |
+| `host_not_accepting` | 409 | watched, never scheduled onto |
+| `socket_on_manager_host` | 409 | Docker socket on the manager's own host is control of the whole fleet |
+| `policy_unenforceable_on_host` | 409 | a restricted policy on a remote host — see §3 |
+| `host_full` | 409 | at `MAX_INSTANCES` |
+| `host_unreachable` | 503 | fails now rather than half-way through create |
+
+**Paths.** `hostPaths(host)` in `server/host-fs.js` returns the `INSTANCE_*`
+environment paths for `local` and derives them from `data_root` for anything
+else, throwing `host_not_bootstrapped` when it is unset. Directories a remote
+host needs are created by running a throwaway `alpine` container **on that
+host** (`runOnHost()`), because the manager cannot `mkdir` on a filesystem it
+has not mounted.
+
+**What is still local-only.** `proxy.js`, `proxy-log.js`, `health.js`,
+`idle-stop.js`, `security-scan.js`, `connectivity-check.js` and
+`workspace-image.js` each build their own client against the mounted socket.
+Instances on a remote host are therefore created and driven correctly, but are
+not ACL-enforced, health-checked, idle-stopped or scanned. This is the honest
+current boundary, not an oversight — and it is why `admit()` refuses a
+restricted policy off-host.
 
 ---
 
@@ -57,7 +112,7 @@ claude-manager/
 
 **Isolation model:**
 
-- Per-instance: `/workspace` (Docker volume `cm-workspace-{slug}-{id}`),
+- Per-instance: `/workspace` (Docker volume `cmv-{slug}-{id}`),
   `/workspace/.claude` (per-slug bind), and **all auth state inside the
   container**.
 - Shared: `/home/claude/.claude` (global config + memory + agent
@@ -76,20 +131,34 @@ Each workspace container runs under one of four policies:
 
 | Policy             | Hosts allowed (see `workspace/policies/*.yaml`)                 |
 |--------------------|-----------------------------------------------------------------|
-| `claude-only`      | `api.anthropic.com`, `statsig.anthropic.com`, `sentry.io`       |
+| `claude-only`      | `api.anthropic.com`, `platform.claude.com`, `statsig.anthropic.com`, `sentry.io` |
 | `claude-github`    | + GitHub (api / web / objects / raw / gist / ssh)               |
 | `claude-full-dev`  | + npm, yarn, PyPI, Cargo, Docker Hub                            |
 | `unrestricted`     | No filtering (covered by a 24 h capability grant)               |
 
+Every restricted policy also allowlists the hosts in
+`shared/constants.js REQUIRED_CLAUDE_HOSTS`, and `lintPolicies()` asserts that
+at startup — a policy that would lock Claude Code out of its own control plane
+fails the boot rather than the user's next turn.
+
 ### Defence in depth
+
+> **On the manager's own host only.** Both layers below are wired by
+> `server/proxy.js`, which builds its own client against the mounted socket, and
+> `HTTPS_PROXY` points at this host's `cm-proxy`. Nothing enforces a policy on a
+> remote host, so `admit()` refuses to create a restricted instance there
+> (`policy_unenforceable_on_host`) and the fleet graph grades any such edge
+> `unenforceable` rather than drawing a gate that does not exist.
 
 For any policy other than `unrestricted`, the manager wires up two
 independent layers:
 
 1. **`HTTPS_PROXY` / `HTTP_PROXY` env** pointing the container at
    `http://cm-proxy:3128`. Manager writes
-   `/proxy-acl/<id>.acl` with a `dstdomain .host` line per allowed
-   domain (using the `.host` form so subdomains are covered). The proxy
+   `/proxy-acl/<id>.acl` with a `dstdomain` line per allowed domain.
+   `buildDstdomains()` writes an **exact host** by default; a policy entry
+   written as `.example.com` or `*.example.com` is what produces a
+   subdomain wildcard. The proxy
    container watches the directory with `inotifywait` and runs
    `squid -k reconfigure` on every change. squid handles HTTPS by
    CONNECT/SNI — no MITM, no TLS termination.
@@ -153,10 +222,19 @@ Each instance picks one of:
 For any non-`claude-max` backend, the manager:
 
 1. Calls LiteLLM to mint a **per-instance virtual key**, stored in
-   `instances.litellm_key`.
-2. Injects `ANTHROPIC_BASE_URL=http://cm-litellm:4000` and
-   `ANTHROPIC_API_KEY=<virtual-key>` into the container, so Claude Code
-   speaks its native protocol to LiteLLM.
+   `instances.litellm_key`. It is used to revoke that instance's access on
+   removal.
+2. Injects `ANTHROPIC_BASE_URL=${LITELLM_API_BASE}` and an
+   `ANTHROPIC_API_KEY` taken from the **per-backend** environment variable
+   (`LITELLM_KEY_LOCAL_LLM`, `LITELLM_KEY_FOUNDRY`,
+   `LITELLM_KEY_FOUNDRY_LATEST`), so Claude Code speaks its native protocol
+   to LiteLLM.
+
+   > The key that is *minted* and the key that is *injected* are not the same
+   > key. Because instances share a per-backend key, the per-instance virtual
+   > key's spend reads zero, so there is no per-instance cost attribution
+   > today. The fleet graph lists this under "what it does not know" rather
+   > than reporting a misleading zero.
 3. LiteLLM (`litellm/config.yaml`) maps Claude model names
    (`claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`,
    etc.) to `ollama_chat/qwen3:30b-a3b`. For `foundry`/`foundry-latest`,
@@ -208,27 +286,41 @@ In code (`server/routes/instances.js` → `createInstance` →
 
 1. Validate body against the schema (`networkPolicy` ∈ `NETWORK_POLICIES`,
    `llmBackend` ∈ `LLM_BACKENDS`).
-2. Check `MAX_INSTANCES`.
-3. Ensure image and Docker network exist.
-4. Create the workspace volume `cm-workspace-{slug}-{id}`.
-5. Learn bind-mounts from any existing managed / adopted / unmanaged
-   claude-workspace container (mount template), skipping
-   `/workspace`, `/data`, and the docker socket.
-6. Pre-create the per-instance memory directory under
-   `INSTANCE_MEMORY_BASE_DIR`.
-7. If `networkPolicy !== 'unrestricted'`, add
-   `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env and `NET_ADMIN` capability.
-8. If `llmBackend !== 'claude-max'`, create a LiteLLM virtual key and
-   inject `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`.
-9. If `dockerSocket: true`, mount the host socket.
-10. Create + (optionally) start the container, label it
+2. **`admit({ hostId, dockerSocket, networkPolicy })`** — the first thing that
+   runs. Resolves the host and refuses with a typed `code` (§1.1), including the
+   `MAX_INSTANCES` check and a liveness ping for a remote host, so a bad
+   placement fails before anything is created rather than half-way through.
+3. `dockerFor(host.id)` — from here on, **every call runs against that host's
+   daemon**, and every path in the container spec must exist *there*, because
+   binds are resolved by the daemon, not by the manager.
+4. `hostPaths(host)` — `INSTANCE_*` env for `local`, derived from `data_root`
+   otherwise.
+5. Mint `CM_EVENT_TOKEN` (32 random bytes).
+6. Return early if a container with this name already exists — create is
+   idempotent.
+7. Ensure image and Docker network exist **on the target daemon**.
+8. Create the workspace volume `cmv-{slug}-{id}`.
+9. Learn bind-mounts from an existing container — **only on the manager's own
+   host**. A learned bind is a path on *this* filesystem; replaying it on
+   another host points at a directory that does not exist there, or belongs to
+   something else entirely.
+10. Prepare the per-instance memory directory: `mkdir`/`chown` locally, or a
+    throwaway `alpine` helper via `runOnHost()` on a remote host.
+11. If `networkPolicy !== 'unrestricted'`, add
+    `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env and `NET_ADMIN` capability.
+    (Only reachable on the local host — `admit()` refused it elsewhere.)
+12. If `llmBackend !== 'claude-max'`, mint a LiteLLM virtual key and inject
+    `ANTHROPIC_BASE_URL` plus the per-backend `ANTHROPIC_API_KEY` (§4).
+13. If `dockerSocket: true`, mount that host's socket.
+14. Create + (optionally) start the container, labelled
     `claude-manager.managed=true` + `id=…` + `network-policy=…` +
-    `llm-backend=…`.
-11. `writeContainerACL(id, { networkPolicy })` — squid picks up the new
-    file via inotify.
-12. Create capability grants for any high-risk choices.
-13. Upsert into SQLite, log `created` activity, broadcast
-    `INSTANCE_CREATED` over WebSocket. Clients re-fetch.
+    `llm-backend=…`, with `CM_MANAGER_URL` from `managerUrlFor(host)` — a LAN
+    URL for a remote host, so the callback leaves the Docker network.
+15. `writeContainerACL(id, { networkPolicy })` — local host only; squid picks
+    up the new file via inotify.
+16. Create capability grants for any high-risk choices.
+17. Upsert into SQLite — storing `host_id` and the **hash** of the event token,
+    never the token — log `created`, broadcast `INSTANCE_CREATED`.
 
 ### 6.2 Recreate (preserve volume)
 
@@ -256,8 +348,17 @@ containers persist across `syncWithDocker()` restarts.
 
 ### 6.4 Real-time updates
 
-The server subscribes once to
-`docker.getEvents({ filters: { label: ['claude-manager.managed=true'] } })`.
+The server keeps **one Docker event stream per enabled host** — a `Map` of
+hostId → stream in `server/routes/instances.js` — each with its own reconnect.
+A single stream only ever watched the manager's own daemon, so an instance
+anywhere else never updated and simply looked frozen.
+
+A 60-second reconcile starts a stream for any enabled host that does not have
+one, so a host registered at runtime is picked up without restarting the
+manager, and a host that was unreachable at boot does not stay unwatched. Both
+`error` and `end` fire on a dropped stream, so the retry checks stream identity
+before reconnecting — otherwise one host gets two reconnect chains.
+
 Each event becomes a `WS_EVENTS` message
 (`instance_created` / `instance_updated` / `instance_removed`) and is
 broadcast to all connected `/api/instances/events` WebSocket clients.
@@ -268,6 +369,8 @@ Additional broadcast event types:
 - `grant_expired` — emitted by the grant checker.
 - `access_requested` — emitted on `POST /api/instances/:id/request-access`.
 - `access_resolved` — emitted on approve/deny.
+- `instance_notify` — emitted on `POST /api/instances/:id/event`, the callback
+  from the in-container Claude Code hook (see §6.7).
 
 ### 6.5 Device authentication (TOFU)
 
@@ -280,9 +383,28 @@ admin; subsequent devices land in `pending`. Tokens are stored as
 SHA-256 hashes (`devices.token_hash`). An optional `ADMIN_RESET_TOKEN`
 env var enables emergency admin promotion via `?reset_token=…`.
 
-Device auth gates `/api/*` only — static frontend assets, the
-`/api/auth/*` routes, and the in-container `/api/instances/:id/request-access` +
-`/api/policies` endpoints are reachable without it.
+Device auth gates `/api/*` only. The exempt set is exactly
+`/api/auth/register`, `/api/auth/status` and `/api/policies`; the rest of
+`/api/auth/*` (`devices`, `devices/:id/approve`, …) **does** require auth.
+
+#### Container callbacks are authenticated too
+
+Three endpoints are reachable from inside a container without a device cookie —
+`request-access`, `access` and `event`. They used to be exempt outright, which
+was safe only while they were reachable solely from the Docker bridge. A remote
+instance calls back over the LAN, so exemption alone would let anything on the
+network act as any instance.
+
+Each instance is therefore created with a `CM_EVENT_TOKEN` of 32 random bytes.
+Only its **hash** is stored, in `instances.event_token`. `callerIsInstance()` in
+`server/auth.js` serves such a request only when the bearer token is a
+timing-safe match for that hash, or the source IP maps to the claimed instance;
+otherwise it answers 403.
+
+Without that binding, any container on the network could file an access request
+naming a *different* instance, and an admin approving it would unknowingly
+widen that other instance's allowlist. Widening an allowlist additionally
+requires an admin device.
 
 ### 6.6 Terminal sessions
 
@@ -305,37 +427,106 @@ State machine:
 
 ![Terminal state](diagrams/terminal-state.png)
 
+### 6.7 Instance status reporting
+
+`workspace/scripts/cm-notify` is registered in the workspace image's managed
+settings as a hook on three Claude Code events, and posts to
+`POST /api/instances/:id/event` with the per-instance token.
+
+| Event | Means |
+|---|---|
+| `Notification` | waiting on a human — a permission prompt, or idle |
+| `UserPromptSubmit` | the human answered; Claude is working |
+| `Stop` | the turn finished |
+
+`UserPromptSubmit` is what makes "needs input" trustworthy. With only the first
+and last, a prompt already answered in the terminal keeps reading as waiting
+until the turn ends. `src/lib/instance-status.js` holds the single definition of
+waiting/working/idle that the row, the card and the fleet graph all read, so the
+three views cannot disagree.
+
+The hook must stay silent: on `UserPromptSubmit`, Claude Code prepends a hook's
+stdout to the user's prompt and treats a non-zero exit as a block. That silence
+is enforced by a lint test, not left to convention.
+
+**Token accounting.** The hook reports the context window as three values —
+`input_tokens`, `cache_read_tokens`, `cache_creation_tokens` — rather than one
+blended total, because a total cannot distinguish a healthy cache-read steady
+state from compaction thrash, and the cache ratio is the dominant cost lever. An
+instance last seen by an older hook reports no split at all rather than zeros:
+unknown and "0% cached" are different claims.
+
+### 6.8 Fleet graph
+
+`GET /api/topology` returns a graph the UI renders: nodes for the internet,
+each host, each host's gate, model routes, the providers behind them, and every
+instance; edges for `runs-on`, `egress-via`, `direct-egress`,
+`allowlisted-egress`, `uses-model`, `routes-to`, `controls-daemon` and `reaches`.
+
+What makes it more than a picture is that **every egress edge carries an
+evidence grade**, not just a shape:
+
+| Grade | Means |
+|---|---|
+| `enforced` | an ACL is written to this host's proxy and `HTTPS_PROXY` is set |
+| `open` | no firewall — this instance reaches whatever it likes |
+| `unenforceable` | a restricted policy on a host the manager's proxy cannot reach |
+| `broken` | health reports a missing or stale ACL |
+
+Each edge also carries a `because` string, and every `unenforceable` edge is
+promoted into `fleet.problems`. The payload additionally ships `notShown[]` — its
+own blind spots, such as the fact that the proxy log keeps destinations only for
+*denied* requests, so allowed traffic is counted but not attributed.
+
+Load comes from `server/metrics.js`: `hostMetrics()` scrapes that host's
+node-exporter (load, memory, sensors, filesystem, boot time) and
+`instanceMetrics()` pulls per-container Docker stats with page cache subtracted.
+Everything is cached for 10s and fails soft to `null` — a graph that renders
+without a temperature is fine, one that blocks on a dead exporter is not.
+
+See [fleet-graph.md](fleet-graph.md) for what the rendering choices mean.
+
 ---
 
 ## 7. Backend layout
 
+20 modules in `server/`, 13 route files. Everything that touches Docker goes
+through `dockerFor(hostId)` unless marked **local-only**, which is the current
+multi-host boundary (§1.1).
+
 ```
 server/
-├── index.js                 Fastify bootstrap, plugin & route registration, grant timer, ACL sync
-├── config.js                Env-var loading
-├── auth.js                  hashToken(), registerAuthHooks() (gate /api except /api/auth + a few in-container)
-├── db.js                    SQLite schema, queries, sync, auto-backup, grants, access requests, LiteLLM keys
-├── docker.js                dockerode wrapper, mount template learning, createInstance, recreateInstance, PTY, event stream
-├── proxy.js                 writeContainerACL, addHostsToACL, removeContainerACL, syncAllACLs
-├── grants.js                createGrantsForInstance, checkExpiredGrants, recreateWithoutCapability
-├── litellm.js               isAvailable, createVirtualKey, deleteVirtualKey
-└── routes/
-    ├── instances.js         REST + WS for /api/instances/*
-    ├── terminal.js          WS for /api/instances/:id/terminal
-    ├── auth.js              /api/auth/* — device registration & approval
-    ├── grants.js            /api/instances/:id/grants, /api/grants/:id/{renew,recreate}, DELETE
-    ├── access-requests.js   /api/instances/:id/request-access, /api/access-requests/:id/{approve,deny}
-    ├── policies.js          /api/policies — lists workspace/policies/*.yaml
-    ├── litellm.js           /api/litellm/status, /api/litellm/models, per-instance key endpoints
-    ├── shared.js            /api/shared/upload (multipart, 50 MB)
-    └── system.js            /api/system, /api/system/activity
-```
+├── index.js                 Fastify bootstrap, route registration, background timers
+├── config.js                40 env-derived settings
+├── logger.js                pino, module-scoped child loggers
+├── db.js                    SQLite: 9 tables, migrations, sync with Docker
+├── auth.js                  device TOFU + per-instance callback tokens
+├── docker.js                instance lifecycle; host-aware via dockerForInstance()
+├── hosts.js                 host registry, dockerFor(), SSH transport, pingHost()
+├── placement.js             admit() — typed refusals before anything is created
+├── host-fs.js               per-host paths, runOnHost() helper containers
+├── topology.js              fleet graph payload: nodes, edges, evidence grades
+├── metrics.js               node-exporter per host, Docker stats per container
+├── grants.js                time-boxed capability grants
+├── litellm.js               virtual keys, model list, health
+├── proxy.js                 squid ACL writer                        [local-only]
+├── proxy-log.js             egress denial attribution               [local-only]
+├── health.js                periodic health monitor                 [local-only]
+├── idle-stop.js             stop idle instances, save memory first  [local-only]
+├── security-scan.js         scheduled Trivy scans                   [local-only]
+├── connectivity-check.js    policy lint + post-update smoke test    [local-only]
+└── workspace-image.js       rebuild on new Claude Code              [local-only]
 
-`registerAuthHooks` is a Fastify `onRequest` hook that gates everything
-under `/api/*` except `/api/auth/*` and a small set of in-container
-endpoints (`request-access`, `access`, `policies`). The hook also
-decorates `request.device` so admin endpoints can check
-`request.device.is_admin`.
+server/routes/
+├── instances.js             CRUD, lifecycle, per-host event streams, callbacks
+├── hosts.js                 host CRUD, ping, bootstrap
+├── system.js                system info, health, topology, egress denials
+├── terminal.js              WebSocket PTY
+├── auth.js                  device registration and approval
+├── grants.js                access-requests.js    policies.js
+├── litellm.js               security-scan.js      connectivity-check.js
+├── shared.js                workspace-image.js
+```
 
 ---
 
@@ -343,36 +534,33 @@ decorates `request.device` so admin endpoints can check
 
 ```
 src/
-├── main.jsx                  React entry
-├── App.jsx                   Auth gate → Dashboard / WaitingApproval
-├── api.js                    fetch wrapper (credentials: 'include')
 ├── hooks/
-│   ├── useAuth.js            /api/auth/status polling
-│   ├── useInstances.js       REST + WebSocket state (re-fetch on event)
-│   ├── useTerminal.js        xterm.js wiring + reconnect/backoff
-│   └── useGrants.js          per-instance grant polling
+│   ├── useAuth.js           device registration, approval polling
+│   ├── useInstances.js      instance list + WebSocket live updates
+│   ├── useGrants.js         capability grants
+│   └── useTopology.js       fleet graph payload, polled at 10s
+├── lib/
+│   ├── instance-status.js   the one definition of waiting / working / idle
+│   ├── graph-layout.js      pure radial layout — not a force simulation
+│   ├── notify.js            desktop/toast notifications, token formatting
+│   └── terminalBus.js       terminal session multiplexing
 └── components/
-    ├── Dashboard.jsx         header, grid/list toggle, modals, activity log, AccessRequests
-    ├── NewInstanceModal.jsx  create form with policy + backend + socket toggle + expiry
-    ├── InstanceCard.jsx      grid card; grant + access badges; start/stop/recreate/remove
-    ├── InstanceRow.jsx       compact list-view row (mobile-first)
-    ├── Terminal.jsx          xterm.js + addons + WebSocket plumbing
-    ├── TerminalTab.jsx       Windows-Terminal-style tab strip
-    ├── PolicyPreview.jsx     shows the YAML of the selected policy in the modal
-    ├── GrantBadge.jsx        time-remaining badge per capability
-    ├── GrantActions.jsx      renew, recreate-without
-    ├── AccessRequests.jsx    admin panel — approve/deny pending requests
-    ├── DeviceManager.jsx     admin — approve / rename / revoke devices
-    ├── LiteLLMPanel.jsx      per-instance LiteLLM usage + budget
-    ├── ActivityLog.jsx       recent actions
-    ├── StatusBadge.jsx       running / exited / created / paused / …
-    ├── WaitingApproval.jsx   pending-device landing page
-    └── Toast.jsx             lightweight notifications
+    ├── Dashboard.jsx        main view; orders instances by attention
+    ├── InstanceRow.jsx      InstanceCard.jsx      StatusBadge.jsx
+    ├── GraphView.jsx        canvas links + SVG nodes
+    ├── GraphDetail.jsx      per-node drawer with evidence grades
+    ├── Terminal.jsx         TerminalTab.jsx       NewInstanceModal.jsx
+    ├── AccessRequests.jsx   GrantActions.jsx      GrantBadge.jsx
+    ├── DeviceManager.jsx    PolicyPreview.jsx     LiteLLMPanel.jsx
+    └── SecurityScanModal.jsx  ActivityLog.jsx     Toast.jsx  WaitingApproval.jsx
 ```
 
-The `useInstances` hook is the central state manager: REST for the
-authoritative list, WebSocket only as a trigger to re-fetch.
-Exponential backoff (1 s → 30 s) on disconnect.
+There is no `useTerminal.js`; the xterm wiring lives in `Terminal.jsx` with
+`lib/terminalBus.js`.
+
+The fleet graph polls at 10s to match `metrics.js`'s 10s cache TTL — change one
+and the other needs changing too, or the UI either shows stale numbers or
+re-requests work that is still cached.
 
 ---
 
@@ -386,9 +574,13 @@ previous DB is copied to `${DATA_DIR}/backups/manager-{timestamp}.db`
 
 ![Schema](diagrams/schema.png)
 
-Migrations are handled by `CREATE TABLE IF NOT EXISTS` + a
-`PRAGMA table_info` check that `ALTER TABLE`s in any missing columns
-(currently `instances.docker_id` and `instances.litellm_key`).
+Nine tables. Migrations are handled by `CREATE TABLE IF NOT EXISTS` plus a
+`PRAGMA table_info` check that `ALTER TABLE`s in any missing column. Currently:
+`instances.docker_id`, `instances.litellm_key`, `instances.claude_version`,
+`instances.host_id` (`NOT NULL DEFAULT 'local'`, so existing rows belong to the
+manager's own daemon), `instances.event_token`, `hosts.docker_engine_id`,
+`instance_scans.verified_secrets`, `instance_usage.status_message` and the three
+`instance_usage` token-split columns.
 
 ### 9.2 Docker labels
 
@@ -408,28 +600,53 @@ Applied to every container the manager creates:
 - **Adopted containers** (pre-existing, can't relabel): resolved by
   `instances.docker_id` (full container ID).
 
-On startup, `syncWithDocker()` inserts unknown Docker containers into
-SQLite and deletes orphaned SQLite rows — except adopted ones with a
-`docker_id`. `syncAllACLs()` then re-writes the proxy ACLs for every
-running container and replays any approved access-request hosts.
+On startup, `syncWithDocker(containers, hostIds)` reconciles **only the hosts
+that were actually polled**. `listManagedContainersByHost()` returns both the
+containers and the set of hosts that answered, and rows belonging to a host that
+errored or was not polled are left alone. It also refuses to reap when a polled
+host reports zero containers while rows still exist for it, returning
+`reapSkipped`.
+
+Without that, a host that is merely unreachable looks exactly like a host whose
+instances have all been deleted, and a transient SSH failure would garbage-collect
+every record of them.
+
+`syncAllACLs()` then re-writes the proxy ACLs for every running container on the
+manager's own host and replays any approved access-request hosts.
 
 ### 9.4 Naming
 
 | Resource          | Pattern                              | Example                              |
 |-------------------|--------------------------------------|--------------------------------------|
-| Container name    | `cm-instance-{slug}-{id}`            | `cm-instance-customer-a-a1b2c3d4`    |
-| Volume name       | `cm-workspace-{slug}-{id}`           | `cm-workspace-customer-a-a1b2c3d4`   |
+| Container name    | `cm-{slug}-{id}`                     | `cm-customer-a-a1b2c3d4`             |
+| Volume name       | `cmv-{slug}-{id}`                    | `cmv-customer-a-a1b2c3d4`            |
 | Network           | `claude-manager-net`                 | `claude-manager-net`                 |
 | Manager container | `claude-manager`                  | `claude-manager`                  |
-| Memory dir        | `data/instance-memory/{slug}/`       | `data/instance-memory/customer-a/`   |
+| Memory dir        | `{data_root}/instance-memory/{slug}/` | `data/instance-memory/customer-a/`  |
 | ACL file          | `/proxy-acl/{safe-id}.acl`           | `/proxy-acl/a1b2c3d4.acl`            |
 
 Slug = name lowercased, non-alphanumeric → hyphens, trimmed, max
 40 chars.
 
+`CONTAINER_PREFIX` (`cm-instance-`) still exists in `shared/constants.js` and is
+used when resolving a container **by name**, but it is not the pattern new
+containers are created with.
+
 ---
 
 ## 10. API reference
+
+> Not exhaustive below. The full surface also includes `GET /api/topology`
+> (§6.8); the `/api/hosts` family (`GET`, `POST`, `GET/PATCH/DELETE /:id`,
+> `POST /:id/ping`, `POST /:id/bootstrap`); `GET /api/system/health`
+> (`?refresh=1` runs the checks now), `GET /api/system/activity` and
+> `GET /api/system/egress-denials`; `GET /api/security-scan` +
+> `POST /api/security-scan/run`; `GET /api/connectivity-check`,
+> `/lint` and `POST /run`; `GET /api/workspace-image` +
+> `POST /api/workspace-image/rebuild`; and `POST /api/shared/upload`.
+>
+> Instance creation can return 404/409/503 with a machine-readable `code` from
+> `admit()` — see the placement table in §1.1.
 
 All endpoints are prefixed with `/api`. Device cookie is required
 unless explicitly noted otherwise.
@@ -511,6 +728,15 @@ unless explicitly noted otherwise.
 
 ## 11. Configuration
 
+> `server/config.js` exports 40 keys; the table below is the commonly-edited
+> subset. Notable additions not listed: `WORKSPACE_SRC_DIR`,
+> `IMAGE_UPDATE_INTERVAL_HOURS`, `SECURITY_SCAN_INTERVAL_HOURS`,
+> `CONNECTIVITY_CHECK_INTERVAL_HOURS`, and `OP_SERVICE_ACCOUNT_TOKEN` — which is
+> a **hard dependency for remote hosts**, because `hosts.js` shells out to
+> `op read` for the SSH key. The manager image installs the 1Password CLI for
+> exactly that reason; without the binary every SSH host probe fails with
+> `spawn op ENOENT` even when the token is set.
+
 All configuration is via environment variables; see `.env.example`.
 
 | Variable                  | Default                        | Purpose                                                    |
@@ -572,7 +798,7 @@ claude-manager/
 ├── src/                        React frontend (see §8)
 ├── shared/constants.js
 ├── policies/                   network policy YAML
-├── tests/                      10 integration tests
+├── tests/                      16 suites (00-config-lint … 15-instance-status) + helpers
 ├── proxy/                      cm-proxy image (squid + watch-acls)
 ├── litellm/                    cm-litellm image (LiteLLM + config.yaml)
 ├── workspace/                  claude-workspace image source

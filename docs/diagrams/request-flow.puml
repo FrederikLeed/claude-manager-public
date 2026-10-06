@@ -1,0 +1,107 @@
+@startuml request-flow
+' Instance creation, as server/docker.js createInstance() actually runs it.
+' Converted from request-flow.mmd: mermaid-cli needs headless Chrome, which
+' could not be launched in the build environment.
+title Instance creation (multi-host)
+
+skinparam backgroundColor #FAFAFA
+skinparam ActivityBackgroundColor #FFFFFF
+skinparam ActivityBorderColor #4A5568
+skinparam NoteBackgroundColor #FFF9E6
+
+start
+:POST /api/instances
+name · hostId · policy · backend · socket?;
+
+partition "placement — server/placement.js admit()" {
+  if (host exists, enabled, accepts instances?) then (no)
+    #FFE5E5:409/404 with a code:
+    unknown_host · host_disabled
+    host_not_accepting;
+    stop
+  endif
+  if (docker socket on the manager's own host?) then (yes)
+    #FFE5E5:409 socket_on_manager_host
+    (that is control of the whole fleet);
+    stop
+  endif
+  if (restricted policy on a remote host?) then (yes)
+    #FFE5E5:409 policy_unenforceable_on_host;
+    note right
+      proxy.js writes ACLs through a
+      local-only client, so the policy
+      would be a label with nothing
+      behind it. Refuse rather than fake.
+    end note
+    stop
+  endif
+  if (host at MAX_INSTANCES?) then (yes)
+    #FFE5E5:409 host_full;
+    stop
+  endif
+  if (remote host answers a ping?) then (no)
+    #FFE5E5:503 host_unreachable
+    (fails now, not half-way through);
+    stop
+  endif
+}
+
+:dockerFor(host.id)
+local → unix socket
+ssh → key read from op:// at connect time;
+
+:hostPaths(host)
+local → INSTANCE_* env
+remote → derived from hosts.data_root
+(throws host_not_bootstrapped if unset);
+
+:mint CM_EVENT_TOKEN — 32 random bytes;
+
+if (container with this name already exists?) then (yes)
+  :return it — create is idempotent;
+  stop
+endif
+
+:ensureImage() on the target daemon;
+:ensureNetwork() on the target daemon;
+:create volume cmv-<slug>-<id>;
+
+if (is this the manager's own host?) then (yes)
+  :learn binds from a template container;
+  note right
+    Local only. A learned bind is a path on
+    THIS filesystem; replaying it on another
+    host points at a directory that does not
+    exist there, or belongs to something else.
+  end note
+else (no)
+  :binds come only from data_root;
+endif
+
+:ensureInstanceMemoryDir()
+local → mkdir + chown
+remote → alpine helper via runOnHost();
+
+:build env
+CM_INSTANCE_ID · CM_EVENT_TOKEN
+CM_MANAGER_URL from managerUrlFor(host)
+CM_NETWORK_POLICY · proxy vars · OP token;
+
+:createContainer with the managed labels;
+:upsertInstance — stores host_id and the
+HASH of the event token, never the token;
+
+if (autoStart?) then (yes)
+  :start container;
+  if (local host?) then (yes)
+    :writeContainerACL() — squid allowlist;
+  else (no)
+    :no ACL — nothing enforces policy here yet;
+  endif
+endif
+
+:201 with the instance, including the
+event token (shown once, to the caller);
+stop
+
+@enduml

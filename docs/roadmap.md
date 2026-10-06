@@ -36,6 +36,47 @@ treat with that lens.
 
 ---
 
+## Shipped (October 2026) — multi-host, fleet graph, instance status
+
+**Multi-host, phases 1 and 2.** A `hosts` registry; `dockerFor(hostId)` giving
+each host its own Docker client, local over the mounted socket and remote over
+SSH with the private key read from a 1Password reference at connect time;
+`placement.admit()` gating every creation with machine-readable refusals;
+per-host data roots with remote directories created by a helper container;
+host-aware instance lifecycle, so start/stop/exec/terminal/recreate work
+wherever the instance lives; one Docker event stream per host with its own
+reconnect and a reconcile for hosts registered at runtime.
+
+**Fleet graph.** `GET /api/topology` with nodes for hosts, gates, model routes,
+providers and instances, and edges that carry an *evidence grade* —
+`enforced`, `open`, `unenforceable`, `broken` — plus the payload's own blind
+spots. Load per host from node-exporter and per instance from Docker stats.
+
+**Instance status and token accounting.** The in-container hook reports
+`UserPromptSubmit` as well as `Stop` and `Notification`, which is what makes
+"needs input" trustworthy; instances waiting on a human sort to the top and are
+marked in the list, the grid and the graph. Context is stored as fresh input,
+cache read and cache write rather than one blended total.
+
+**Security.** Container callbacks are bound to the calling instance by a
+per-instance token; widening an allowlist requires an admin device.
+
+### Known gaps, stated plainly
+
+- **Per-host proxy.** `proxy.js` writes squid ACLs through a local-only client,
+  so a restricted policy cannot be enforced on a remote host. Placement refuses
+  such an instance rather than creating one nothing enforces. This is the single
+  item blocking policy-constrained work off-host, and the next real chunk.
+- **Local-only subsystems.** health, idle-stop, security-scan,
+  connectivity-check and workspace-image all still build their own client
+  against the mounted socket, so a remote instance is not health-checked,
+  idle-stopped or scanned, and its image can drift.
+- **Per-instance LLM cost.** A per-instance virtual key is minted and stored,
+  but instances are injected a per-backend key, so per-instance spend reads
+  zero. The LiteLLM panel's budget figures are per backend, not per instance.
+
+---
+
 ## Phase 2 -- Observability (Partially Complete)
 
 **Goal**: Know what each instance is doing without opening a terminal.

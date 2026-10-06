@@ -38,6 +38,12 @@ docker compose version
 
 ### NVIDIA GPU + Container Toolkit (for `cm-ollama`)
 
+> The base `docker-compose.yml` deliberately carries **no** device reservation,
+> so the stack starts on a host without a GPU. The reservation lives in
+> `docker-compose.gpu.yml`; add it with
+> `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`.
+
+
 `cm-ollama` runs Qwen3 30B-A3B locally. The `docker-compose.yml`
 declares an NVIDIA GPU reservation for the `cm-ollama` service:
 
@@ -99,6 +105,18 @@ plus 5-7 concurrent workspace instances.
 All other inter-container traffic goes over the `claude-manager-net`
 bridge.
 
+### 1Password CLI — required for remote hosts
+
+The manager image installs the `op` binary (pinned via the `OP_VERSION` build
+arg). `server/hosts.js` shells out to `op read` for a host's SSH key at connect
+time, so the key lives only in the vault and never reaches the database or a
+backup.
+
+`OP_SERVICE_ACCOUNT_TOKEN` must be set for the manager container. Without the
+token `readVaultSecret()` throws; without the binary every SSH host probe fails
+with `spawn op ENOENT` even when the token is set. Neither affects the `local`
+host, which uses the mounted socket.
+
 ### Claude Workspace image
 
 The image is built from this repo's `workspace/Dockerfile`. There's no
@@ -153,7 +171,7 @@ On first start the manager:
 | `PORT` | `3002` | Manager port inside the container |
 | `CLAUDE_IMAGE` | `claude-workspace:latest` | Workspace image for new instances |
 | `CLAUDE_NETWORK` | `claude-manager-net` | Bridge network for manager + instances |
-| `MAX_INSTANCES` | `20` | Hard cap on managed instances. Create returns HTTP 409 when reached. |
+| `MAX_INSTANCES` | `20` | Cap **per host**, not fleet-wide — `admit()` counts `getInstancesByHost(id)`. Create returns 409 `host_full`. |
 | `SHARED_DIR` | `./data/shared` | Manager's own `/shared` mount source |
 | `INSTANCE_SHARED_DIR` | *(unset)* | **Host** path bind-mounted as `/shared` in every new instance |
 | `INSTANCE_CLAUDE_DIR` | *(unset)* | **Host** path bind-mounted as `/home/claude/.claude` |
@@ -161,8 +179,9 @@ On first start the manager:
 | `INSTANCE_MEMORY_DIR` | *(unset)* | Legacy single-shared project memory; leave empty when using the base dir |
 | `ADMIN_RESET_TOKEN` | *(unset)* | Emergency admin promotion via `?reset_token=…` |
 | `DEFAULT_NETWORK_POLICY` | `unrestricted` | Pre-selected policy in the create modal |
-| `POLICIES_HOST_DIR` | *(unset)* | Host path of `workspace/policies/` (overrides volume) |
-| `POLICIES_VOLUME` | `cm-policies` | Alternative for DinD setups |
+| `POLICIES_HOST_DIR` | *(unset)* | **Dead.** Declared in `config.js`, read nowhere. |
+| `POLICIES_VOLUME` | `cm-policies` | **Dead.** Declared in `config.js`, read nowhere. |
+| `OP_SERVICE_ACCOUNT_TOKEN` | *(unset)* | 1Password service account. Required for SSH hosts; see Prerequisites. |
 | `POLICIES_DIR` | `/app/policies` | Where the manager reads policy YAML inside its own container |
 | `PROXY_URL` | `http://cm-proxy:3128` | Proxy URL injected into restricted instances |
 | `PROXY_ACL_DIR` | `/proxy-acl` | Where the manager writes per-container ACL files |
@@ -249,7 +268,78 @@ docker compose -f docker-compose.yml stop
 
 ---
 
-## 4. Reverse proxy
+## 4. Adding a managed host
+
+The manager drives any number of hosts. The row `local` is seeded and means
+"the daemon whose socket is mounted"; everything else is reached over SSH.
+
+**On the target host**, give the manager a way in. The remote side needs only an
+SSH daemon and the Docker CLI with access to the socket — `docker-modem` runs
+`docker system dial-stdio` over the connection, so no Docker TCP port is ever
+opened. A small container is enough:
+
+```bash
+docker run -d --name cm-sshd --restart unless-stopped \
+  -p 2222:22 -v cm-sshd:/sshd -v /var/run/docker.sock:/var/run/docker.sock \
+  <image with sshd + docker-cli>
+```
+
+Keep the host key and `authorized_keys` in a volume so rebuilding the image does
+not change the fingerprint.
+
+**Store the private key in 1Password**, never in the database or the request
+body — the API rejects anything that is not an `op://` reference.
+
+**Register it:**
+
+```bash
+curl -X POST http://<manager>/api/hosts \
+  -H 'Cookie: cm_device_token=…' -H 'Content-Type: application/json' -d '{
+    "id": "host-b", "name": "Host B", "kind": "ssh",
+    "address": "198.51.100.21", "sshUser": "root", "sshPort": 2222,
+    "sshKeyRef": "op://Vault/ssh-host-b/credential",
+    "dataRoot": "/var/lib/cm-fleet",
+    "managerUrl": "http://<manager-lan-ip>:3000",
+    "acceptsInstances": true }'
+```
+
+`managerUrl` must be an address the *instance* can reach. For a remote host that
+is a LAN URL, because the callback leaves the Docker network.
+
+**Bootstrap and verify:**
+
+```bash
+curl -X POST http://<manager>/api/hosts/host-b/ping       # {"ok":true,"version":"…"}
+curl -X POST http://<manager>/api/hosts/host-b/bootstrap  # creates data_root dirs as 1001:1001
+```
+
+`bootstrap` runs a throwaway `alpine` container **on the target host** to create
+`shared/`, `claude-home/` and `instance-memory/` under `data_root`, because the
+manager cannot `mkdir` on a filesystem it has not mounted.
+
+### What does not work on a remote host yet
+
+Instances are created, started, stopped, exec'd into and removed normally. These
+subsystems still build their own client against the mounted socket and therefore
+only cover the manager's own host:
+
+| Subsystem | Consequence off-host |
+|---|---|
+| `proxy.js` / `proxy-log.js` | no ACL enforcement, no denial attribution |
+| `health.js` | not health-checked |
+| `idle-stop.js` | not stopped when idle |
+| `security-scan.js` | not scanned |
+| `connectivity-check.js` | no post-update smoke test |
+| `workspace-image.js` | image is not rebuilt there; versions can drift |
+
+Because of the first row, `admit()` **refuses** to create an instance with a
+restricted network policy on a remote host (409
+`policy_unenforceable_on_host`) rather than creating one whose policy nothing
+enforces. Only `unrestricted` is honest there today.
+
+---
+
+## 5. Reverse proxy
 
 The manager uses WebSockets for real-time events and in-browser
 terminals. Any reverse proxy must pass WebSocket upgrade headers.
@@ -314,7 +404,7 @@ Traefik passes WebSocket upgrades automatically.
 
 ---
 
-## 5. Updating
+## 6. Updating
 
 ```bash
 cd claude-manager
@@ -329,14 +419,14 @@ etc.) on startup.
 
 ---
 
-## 6. Backup
+## 7. Backup
 
 ### What lives where
 
 | Class                          | Where                                                | Backup story                          |
 |--------------------------------|------------------------------------------------------|---------------------------------------|
 | Manager DB                     | Docker volume `claude-manager-data` → `/data/manager.db` | Auto-snapshot to `/data/backups/` on every startup (last 3 kept) |
-| Per-instance code & files       | Docker volume `cm-workspace-{slug}-{id}` (`/workspace`) | `docker volume` — not auto-backed-up |
+| Per-instance code & files       | Docker volume `cmv-{slug}-{id}` (`/workspace`) | `docker volume` — not auto-backed-up |
 | Per-instance project memory    | `data/instance-memory/<slug>/` on host               | **`git push`**                        |
 | Global Claude config + memory   | `data/claude-home/` on host (auth files gitignored)  | **`git push`**                        |
 | Shared files                   | `data/shared/` on host                               | **`git push`** (unless ignored)       |
@@ -380,7 +470,7 @@ To restore on a new host:
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 ### "Cannot connect to Docker"
 
@@ -446,7 +536,7 @@ can mint virtual keys). Both pick up the same `.env` value via
 ### Terminal not connecting through reverse proxy
 
 The most common issue is missing WebSocket upgrade headers. See
-§4 above. Also bump `proxy_read_timeout` for long sessions.
+§5 above. Also bump `proxy_read_timeout` for long sessions.
 
 ### File upload fails
 
@@ -464,7 +554,7 @@ docker compose -f docker-compose.yml up -d --force-recreate claude-manager
 
 ---
 
-## 8. Security considerations
+## 9. Security considerations
 
 ### Docker socket access
 

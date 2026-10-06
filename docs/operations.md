@@ -21,7 +21,9 @@ A single-page React app with four main areas:
 ### Header bar
 
 - **Status indicator** — coloured dot showing Docker connection health.
-- **Instance count** — managed instances versus `MAX_INSTANCES`.
+- **Instance count** — managed instances versus `MAX_INSTANCES`, which is a cap **per host**, not fleet-wide.
+- **Needs-input count** — instances whose last hook event was a `Notification`, i.e. waiting on you. They also sort to the top of the list.
+- **Fleet graph** — opens the interactive topology (hosts, gates, model routes, load). Not the default view; something you open to look at.
 - **LiteLLM status** — small badge if LiteLLM is reachable.
 - **Upload to /shared** — file picker.
 - **+ New Instance** — opens the creation modal.
@@ -67,7 +69,7 @@ container.
 | Network policy | Yes | `claude-only` / `claude-github` / `claude-full-dev` / `unrestricted` |
 | LLM backend | Yes | `claude-max` / `local-llm` / `foundry` / `foundry-latest` |
 | Auto-start | No | When checked, the container starts immediately after creation |
-| Allow Docker socket | No | When checked, `/var/run/docker.sock` is mounted (registers a 24 h capability grant) |
+| Allow Docker socket | No | Mounts that host's `/var/run/docker.sock` (registers a 24 h capability grant). **Refused outright on the host running the manager** — 409 `socket_on_manager_host`, because it would hand the instance control of the whole fleet. |
 | Expiry hours | No | Override the default 24 h TTL on high-risk capability grants |
 
 The form previews the selected policy YAML so you can see exactly what
@@ -78,7 +80,9 @@ hosts will be allowed.
 **Behind the scenes:**
 
 - The name → slug (lowercase, non-alphanumeric → hyphens, max 40 chars).
-- Container `cm-instance-{slug}-{id}` and volume `cm-workspace-{slug}-{id}`.
+- Container `cm-{slug}-{id}` and volume `cmv-{slug}-{id}`.
+  - Bind mounts are learned from an existing container **only on the manager's
+    own host**; on a remote host they come from `hosts.data_root` instead.
 - Per-instance memory dir `data/instance-memory/{slug}/` created on the
   host (bind-mounted as `/workspace/.claude`).
 - Bind-mounts for `/shared` and `/home/claude/.claude` are learned from
@@ -89,14 +93,38 @@ hosts will be allowed.
   the entrypoint installs iptables rules locking outbound to the
   proxy + Docker-internal networks.
 - For any backend other than `claude-max`, the manager mints a
-  per-instance LiteLLM virtual key and injects
+  per-instance LiteLLM virtual key (used only to revoke access on removal)
+  and separately injects a **per-backend** key:
   `ANTHROPIC_BASE_URL=http://cm-litellm:4000` +
-  `ANTHROPIC_API_KEY=<virtual-key>` so Claude Code talks to LiteLLM
-  using its native protocol.
+  `ANTHROPIC_API_KEY` from `LITELLM_KEY_<BACKEND>`, so Claude Code talks to
+  LiteLLM in its native protocol. The minted key is not the key in use,
+  which is why per-instance spend reads zero.
 - The manager writes the per-container ACL file under `/proxy-acl/`;
   squid reconfigures within ~1 second via inotify.
 - Capability grants (`docker_socket`, `network_unrestricted`) are
   created if applicable.
+
+### Choosing a host
+
+The create form has a **Host** selector. `local` means the daemon whose socket
+the manager mounts; anything else is a registered host reached over SSH.
+
+Creation is gated by `admit()`, which refuses with a specific reason rather
+than a generic error:
+
+| You see | Means |
+|---|---|
+| `unknown_host` | no such host |
+| `host_disabled` | registered but switched off |
+| `host_not_accepting` | the host is watched but never scheduled onto — set `acceptsInstances` to change that |
+| `socket_on_manager_host` | Docker socket on the manager's own host; that is control of the fleet |
+| `policy_unenforceable_on_host` | a restricted policy on a remote host — see §14 |
+| `host_full` | that host is at `MAX_INSTANCES` (the cap is per host) |
+| `host_unreachable` | the host did not answer; nothing was created |
+
+A host that is merely unreachable never loses its instance records — the
+reconcile skips hosts that did not answer rather than treating silence as
+deletion.
 
 ### Starting and stopping
 
@@ -119,7 +147,7 @@ dropped during recreation.
 2. Confirm.
 
 By default the workspace volume is **kept** so files survive removal.
-Tick "Also delete volume" to remove `cm-workspace-{slug}-{id}` as
+Tick "Also delete volume" to remove `cmv-{slug}-{id}` as
 well. Removal also:
 
 - Deletes capability grants for the instance.
@@ -150,7 +178,7 @@ Pick at instance creation, or change later via the recreate flow.
 
 | Policy | What it allows |
 |--------|----------------|
-| `claude-only` | `api.anthropic.com`, `statsig.anthropic.com`, `sentry.io` |
+| `claude-only` | `api.anthropic.com`, `platform.claude.com`, `statsig.anthropic.com`, `sentry.io` |
 | `claude-github` | + GitHub (web, API, raw, objects, gist, ssh) |
 | `claude-full-dev` | + npm, yarn, PyPI, files.pythonhosted.org, Cargo, Docker Hub |
 | `unrestricted` | No filtering — requires `network_unrestricted` grant (default 24 h) |
@@ -159,6 +187,8 @@ The exact host lists live in `workspace/policies/*.yaml`. Drop in a
 custom YAML there to add new policies (restart manager to pick it up).
 
 ### Approving access requests
+
+Approving or denying requires an **admin** device; a non-admin gets 403.
 
 Agents running inside a restricted container can ask for more access
 through `cm-access`:
@@ -190,7 +220,7 @@ re-applied on manager restart by `syncAllACLs()`.
 ### Inspecting a container's effective access
 
 ```bash
-docker exec cm-instance-<slug>-<id> cm-access --status
+docker exec cm-<slug>-<id> cm-access --status
 docker exec cm-proxy cat /etc/squid/acl/<id>.acl   # raw ACL for that container
 ```
 
@@ -207,7 +237,7 @@ Each instance picks one of:
 | `foundry` | Azure AI Foundry `gpt-4.1-mini-1` via LiteLLM | `AZURE_AI_API_KEY` |
 | `foundry-latest` | Azure AI Foundry `gpt-chat-latest` via LiteLLM | `GPTLATEST_AZURE_AI_API_KEY` |
 
-Non-`claude-max` backends use the **per-instance LiteLLM virtual key**
+Non-`claude-max` backends are injected a **per-backend** LiteLLM key
 stored in `instances.litellm_key`. Each key has a budget (default $20,
 configurable via `LITELLM_DEFAULT_BUDGET`). The **LiteLLM panel** on
 each instance card shows usage + budget; rotate the key from there if
@@ -388,12 +418,15 @@ docker logs claude-manager 2>&1 | grep '"action":"die"'        # instance exits 
 
 ### Health endpoints
 
+> The health monitor checks the manager's **own** daemon only. Instances on
+> another registered host are not health-checked — see §14.
+
 - `GET /api/system/health` — latest health-monitor report (`?refresh=1` runs it now). Checks: `cm-proxy` and `cm-litellm` running; every running restricted instance has an ACL whose IP matches the container's current IP and has `HTTPS_PROXY` set.
 - `GET /api/system/egress-denials` — last 200 squid denials with instance name, policy and host (repeats of the same instance+host within 10 min are counted, not re-logged).
 
 ### At a glance
 
-- **Instance count** in the header — managed vs. `MAX_INSTANCES`.
+- **Instance count** in the header — managed vs. `MAX_INSTANCES` (per host).
 - **Docker connection** — green/red dot.
 - **LiteLLM status** — small badge if reachable.
 - **Per-instance** — state, network policy, LLM backend, grant
@@ -416,7 +449,7 @@ docker compose -f docker-compose.yml logs cm-ollama --tail 50
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | SQLite DB | Docker volume `claude-manager-data` → `/data/manager.db` | Instance metadata, devices, grants, access requests, LiteLLM keys, activity log |
-| Per-instance workspace | Docker volume `cm-workspace-{slug}-{id}` | Code & files at `/workspace` |
+| Per-instance workspace | Docker volume `cmv-{slug}-{id}` | Code & files at `/workspace` |
 | Per-instance project memory | `data/instance-memory/{slug}/` on host | Mounted at `/workspace/.claude` (isolated, git-tracked) |
 | Global Claude config | `data/claude-home/` on host | Mounted at `/home/claude/.claude` (shared, git-tracked, auth gitignored) |
 | Shared files | `data/shared/` on host | Mounted at `/shared` (shared, git-tracked) |
@@ -494,6 +527,35 @@ container restart**.
 ### Clean up a removed instance's data
 
 1. Remove the instance from the dashboard (tick "Also delete volume"
-   to include `cm-workspace-{slug}-{id}`).
+   to include `cmv-{slug}-{id}`).
 2. Optionally remove the per-instance memory dir
    `data/instance-memory/{slug}/`.
+
+---
+
+## 14. Running instances on another host — what works and what does not
+
+Instances on a registered remote host are created, started, stopped, exec'd
+into, given a terminal, recreated and removed exactly as local ones are, and
+their status callbacks authenticate over the LAN with a per-instance token.
+
+These subsystems still talk only to the manager's own daemon:
+
+| Subsystem | Consequence on a remote host |
+|---|---|
+| squid ACLs + denial attribution | network policy is **not enforced** |
+| health monitor | instances are not health-checked |
+| idle stop | instances are not stopped when idle |
+| security scans | instances are not scanned |
+| connectivity smoke test | no post-update verification |
+| workspace image rebuild | the image is not rebuilt there, so Claude Code versions can drift between hosts |
+
+Because of the first row, creating an instance with any policy other than
+`unrestricted` on a remote host is **refused** (`policy_unenforceable_on_host`)
+rather than silently producing one whose policy nothing enforces. The fleet
+graph marks the same situation `unenforceable` instead of drawing a gate that
+is not there.
+
+Practically: use a remote host for work that would run `unrestricted` anyway,
+and keep policy-constrained instances on the manager's host until the per-host
+proxy lands.

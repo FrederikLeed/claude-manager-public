@@ -1,0 +1,156 @@
+@startuml schema
+' manager.db — the manager's own metadata. Docker remains the source of truth
+' for container state; these tables hold what Docker cannot answer.
+'
+' Converted from schema.mmd: mermaid-cli needs headless Chrome, which could not
+' be launched in the build environment. PlantUML renders entity diagrams natively.
+title manager.db schema (multi-host)
+
+hide circle
+skinparam linetype ortho
+skinparam backgroundColor #FAFAFA
+skinparam entity {
+  BackgroundColor #FFFFFF
+  BorderColor #4A5568
+}
+
+entity "hosts" as hosts {
+  * id : TEXT <<PK>>  — 'local' is seeded and cannot be deleted
+  --
+  * name : TEXT
+  * kind : TEXT — 'local' | 'ssh'
+  address : TEXT
+  ssh_user : TEXT
+  ssh_port : INTEGER — part of the client cache key
+  ssh_key_ref : TEXT — op:// reference, never key material
+  data_root : TEXT — binds derive from this on a remote host
+  manager_url : TEXT — what an instance here calls back to
+  proxy_container : TEXT
+  network : TEXT
+  enabled : INTEGER
+  accepts_instances : INTEGER — watched but never scheduled onto
+  labels : TEXT — JSON
+  status : TEXT
+  status_detail : TEXT
+  last_seen : INTEGER
+  docker_engine_id : TEXT — catches one daemon registered twice
+  * created_at : INTEGER
+}
+
+entity "instances" as instances {
+  * id : TEXT <<PK>> — 8-char, manager-assigned
+  --
+  docker_id : TEXT — set for adopted containers
+  * name : TEXT
+  * image : TEXT
+  * created_at : INTEGER
+  notes : TEXT
+  tags : TEXT — JSON
+  port : INTEGER
+  litellm_key : TEXT — per-instance virtual key
+  claude_version : TEXT — version it was created on
+  * host_id : TEXT <<FK>> — defaults to 'local'
+  event_token : TEXT — hash only; binds callbacks to this instance
+}
+
+entity "instance_usage" as usage {
+  * instance_id : TEXT <<PK>> <<FK>>
+  --
+  context_tokens : INTEGER — the blended total
+  input_tokens : INTEGER — fresh input
+  cache_read_tokens : INTEGER — replayed, cheap
+  cache_creation_tokens : INTEGER — paid once to write
+  output_tokens : INTEGER
+  model : TEXT
+  last_event : TEXT — Stop | Notification | UserPromptSubmit
+  status_message : TEXT — belongs to last_event; replaced, not merged
+  updated_at : TEXT
+}
+
+entity "instance_scans" as scans {
+  * instance_id : TEXT <<PK>> <<FK>>
+  --
+  critical : INTEGER
+  high : INTEGER
+  medium : INTEGER
+  low : INTEGER
+  secrets : INTEGER
+  verified_secrets : INTEGER — confirmed live, not just shaped like one
+  findings : TEXT — JSON
+  error : TEXT
+  scanned_at : TEXT
+}
+
+entity "capability_grants" as grants {
+  * id : INTEGER <<PK>>
+  --
+  * instance_id : TEXT <<FK>>
+  * capability_name : TEXT
+  * granted_at : TEXT
+  * expires_at : TEXT — grants are time-boxed
+  source : TEXT
+  active : INTEGER
+}
+
+entity "access_requests" as reqs {
+  * id : INTEGER <<PK>>
+  --
+  * instance_id : TEXT <<FK>>
+  requested_policy : TEXT
+  requested_hosts : TEXT — JSON
+  reason : TEXT
+  * status : TEXT — pending | approved | denied
+  created_at : TEXT
+  resolved_at : TEXT
+  resolved_by : TEXT — admin device
+}
+
+entity "activity_log" as log {
+  * id : INTEGER <<PK>>
+  --
+  * action : TEXT
+  instance_id : TEXT
+  instance_name : TEXT — kept after the instance is gone
+  details : TEXT
+  created_at : TEXT
+}
+
+entity "devices" as devices {
+  * id : TEXT <<PK>>
+  --
+  name : TEXT
+  * token_hash : TEXT — hash only
+  approved : INTEGER
+  is_admin : INTEGER — required to widen an allowlist
+  user_agent : TEXT
+  last_seen : TEXT
+  created_at : TEXT
+}
+
+entity "meta" as meta {
+  * key : TEXT <<PK>>
+  --
+  value : TEXT
+  updated_at : TEXT
+}
+
+hosts   ||--o{ instances : "runs"
+instances ||--o| usage   : "last reported"
+instances ||--o| scans   : "last scan"
+instances ||--o{ grants  : "time-boxed capability"
+instances ||--o{ reqs    : "agent asks to widen"
+instances ||--o{ log     : "audit trail"
+
+note bottom of devices
+  Browser/device auth. Separate from instance
+  callbacks, which authenticate with the
+  per-instance event_token instead.
+end note
+
+note bottom of meta
+  Manager-wide key/value, e.g. the workspace
+  image's Claude Code version. Still global —
+  per-host image tracking is not built yet.
+end note
+
+@enduml

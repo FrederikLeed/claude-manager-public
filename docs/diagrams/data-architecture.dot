@@ -1,4 +1,8 @@
 digraph G {
+  // The host paths below are the MANAGER'S OWN host. On any other registered
+  // host the same three directories are derived from hosts.data_root
+  // (server/host-fs.js hostPaths), not from the INSTANCE_* environment, and
+  // are created there by a throwaway helper container (runOnHost).
   graph [
     rankdir=LR
     compound=true
@@ -54,7 +58,7 @@ digraph G {
       label=<<B>Docker volumes (not git-tracked)</B>>; labeljust=l
       style="rounded,filled,dashed"; fillcolor="#E8F5E9"; color="#2E7D32"
       vol_ws    [label="cm-workspace-{slug}-{id}\n(one per instance)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
-      vol_mgr   [label="claude-manager-v2-data\n(manager.db)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
+      vol_mgr   [label="claude-manager-data\n(manager.db)" shape=cylinder fillcolor="#A5D6A7" color="#2E7D32"]
       vol_acl   [label="proxy-acl\n(squid ACLs)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
       vol_ollama [label="ollama-data\n(model weights)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
       vol_pgdb  [label="litellm-db\n(virtual keys)" shape=cylinder fillcolor="#FFE0B2" color="#E65100"]
@@ -62,7 +66,7 @@ digraph G {
   }
 
   subgraph cluster_inst {
-    label=<<B>Inside workspace container: cm-instance-customer-a</B>>; labeljust=l
+    label=<<B>Inside workspace container: cm-customer-a</B>>; labeljust=l
     style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#2E7D32"; fontsize=13; penwidth=2
 
     c_ws   [label=<<B>/workspace</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">Docker volume<BR ALIGN="LEFT"/>customer-repo/<BR ALIGN="LEFT"/></FONT>> fillcolor="#A5D6A7" color="#2E7D32"]
@@ -72,7 +76,7 @@ digraph G {
   }
 
   subgraph cluster_mgr_view {
-    label=<<B>Inside manager: claude-manager-v2</B>>; labeljust=l
+    label=<<B>Inside manager: claude-manager</B>>; labeljust=l
     style="rounded,filled,dashed"; fillcolor="#FAFAFA"; color="#1565C0"; fontsize=13; penwidth=2
     m_data    [label=<<B>/data</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">manager.db (SQLite)<BR ALIGN="LEFT"/>+ /data/backups/<BR ALIGN="LEFT"/></FONT>> fillcolor="#BBDEFB" color="#1565C0"]
     m_policies [label=<<B>/policies (RO)</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">YAML policy bundle<BR ALIGN="LEFT"/></FONT>> fillcolor="#FFCDD2" color="#C62828"]

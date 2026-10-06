@@ -18,22 +18,22 @@ digraph G {
     label=<<B>Workspace instances (per-instance backend)</B>>; labeljust=l
     style="rounded,dashed,filled"; fillcolor="#E8F5E9"; color="#2E7D32"; penwidth=2
 
-    inst_max [label=<<B>cm-instance-customer-a</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    inst_max [label=<<B>cm-customer-a</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
       claude-max<BR ALIGN="LEFT"/>
       claude login required<BR ALIGN="LEFT"/>
       no ANTHROPIC_BASE_URL override<BR ALIGN="LEFT"/>
     </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
 
-    inst_local [label=<<B>cm-instance-docs-writer</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    inst_local [label=<<B>cm-docs-writer</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
       local-llm<BR ALIGN="LEFT"/>
       ANTHROPIC_BASE_URL → cm-litellm<BR ALIGN="LEFT"/>
-      ANTHROPIC_API_KEY = virtual key<BR ALIGN="LEFT"/>
+      ANTHROPIC_API_KEY = per-BACKEND key<BR ALIGN="LEFT"/>
     </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
 
-    inst_foundry [label=<<B>cm-instance-doc-eval</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
+    inst_foundry [label=<<B>cm-doc-eval</B><BR ALIGN="LEFT"/><FONT POINT-SIZE="8">
       foundry<BR ALIGN="LEFT"/>
       ANTHROPIC_BASE_URL → cm-litellm<BR ALIGN="LEFT"/>
-      ANTHROPIC_API_KEY = virtual key<BR ALIGN="LEFT"/>
+      ANTHROPIC_API_KEY = per-BACKEND key<BR ALIGN="LEFT"/>
     </FONT>> fillcolor="#C8E6C9" color="#2E7D32"]
   }
 
@@ -41,7 +41,9 @@ digraph G {
     OpenAI-compatible router<BR ALIGN="LEFT"/>
     model_list (litellm/config.yaml)<BR ALIGN="LEFT"/>
     Claude model name aliases<BR ALIGN="LEFT"/>
-    Per-instance virtual keys<BR ALIGN="LEFT"/>
+    Mints a per-instance virtual key, but<BR ALIGN="LEFT"/>
+    instances get a per-backend one, so<BR ALIGN="LEFT"/>
+    per-instance spend reads zero<BR ALIGN="LEFT"/>
   </FONT>> fillcolor="#FFE0B2" color="#E65100"]
 
   ollama [label=<<B>cm-ollama</B> :11434<BR ALIGN="LEFT"/><FONT POINT-SIZE="8">

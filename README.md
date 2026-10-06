@@ -1,6 +1,6 @@
 # Claude Manager
 
-A self-hosted Docker container management UI for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workspaces with **per-container network policy enforcement** and a **pluggable LLM backend**. Claude Manager runs as a Docker container alongside your Claude Code instances, providing a web dashboard to create, monitor, and access isolated workspace containers through the Docker Engine API.
+A self-hosted Docker container management UI for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) workspaces with **per-container network policy enforcement** and a **pluggable LLM backend**. Claude Manager runs as a Docker container and drives a **fleet of Docker hosts** — its own daemon over the mounted socket, and any number of others over SSH — providing a web dashboard to create, monitor and access isolated workspace containers through the Docker Engine API.
 
 This repository contains everything needed to run the stack — the manager UI, the workspace image, a squid forward proxy, a LiteLLM router, and an Ollama runtime for local inference.
 
@@ -133,6 +133,8 @@ Six containers, one bridge network. The manager creates and tears down workspace
 
 - **Docker as source of truth** — container state from the Docker API; SQLite stores supplemental metadata, devices, grants, access requests
 - **Sibling containers, not nested** — manager talks to `dockerode` over the host socket
+- **One client per host** — `dockerFor(hostId)` returns the mounted socket for the control host and an SSH client for every other; a host's private key lives in 1Password and is read at connect time, never stored
+- **Refuse what cannot be enforced** — only the control host runs a `cm-proxy`, so placement rejects a restricted network policy on a remote host rather than creating one nothing enforces
 - **Cognitive isolation** — per-instance `/workspace` volume + `/workspace/.claude` memory + per-instance auth
 - **Defence in depth on network** — squid filters by domain, iptables blocks bypass attempts at the kernel level
 - **Pluggable inference** — non-Claude backends speak Claude's API via LiteLLM, so Claude Code works unchanged
@@ -251,7 +253,7 @@ claude-manager/
 
 ### Manager Database Schema
 
-`manager.db` (SQLite) holds supplemental metadata: instance metadata, device auth, capability grants, access requests, LiteLLM keys, activity history.
+`manager.db` (SQLite) holds supplemental metadata across nine tables: instance metadata, the **host registry**, device auth, capability grants, access requests, LiteLLM keys, per-instance token usage, security-scan results and activity history.
 
 ![Schema](docs/diagrams/schema.png)
 

@@ -36,6 +36,9 @@ markmap:
 - claude-full-dev — + npm/PyPI/Cargo/Docker Hub
 - unrestricted — no filtering
 ### Enforcement
+
+- Manager host only — a remote host has no `cm-proxy` of its own, so
+  `placement.admit()` refuses any policy but `unrestricted` there
 - squid forward proxy (cm-proxy)
 - Per-container ACL files (manager-generated)
 - inotify → squid -k reconfigure
@@ -57,7 +60,7 @@ markmap:
 - Azure AI Foundry GPT-4.1-mini · GPT Latest
 ### Routing
 - Non-claude-max → LiteLLM proxy
-- ANTHROPIC_BASE_URL + per-instance virtual key
+- ANTHROPIC_BASE_URL + per-BACKEND key (a per-instance virtual key is minted and stored, but not injected, so per-instance spend reads zero)
 - Claude model name aliases mapped server-side
 
 ## Capability grants
