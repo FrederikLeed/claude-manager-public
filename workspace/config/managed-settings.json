@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/cm-notify",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

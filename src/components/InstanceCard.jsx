@@ -2,6 +2,7 @@ import { useState } from 'react';
 import StatusBadge from './StatusBadge.jsx';
 import GrantBadge from './GrantBadge.jsx';
 import { formatTokens } from '../lib/notify.js';
+import { instanceStatus, contextSplit } from '../lib/instance-status.js';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -26,6 +27,8 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
   const [recreating, setRecreating] = useState(false);
   const [updating, setUpdating] = useState(false);
   const busy = stopping || removing || recreating || updating;
+  const status = managed ? instanceStatus(instance) : null;
+  const split = contextSplit(instance.usage);
 
   const handleUpdateClaude = async () => {
     if (!window.confirm('Recreate this instance on the latest Claude Code? Your workspace data is retained.')) return;
@@ -34,6 +37,10 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
   };
   const isRunning = instance.state === 'running';
   const isStopped = instance.state === 'exited' || instance.state === 'created';
+  // The 4px left edge carries the container's state. The "waiting" cue is a ring
+  // on top of it rather than a border colour, which would repaint that edge on
+  // exactly the cards you most need to read it on; a ring is a box-shadow, so
+  // the two cues cannot collide.
   const borderColor = borderColors[instance.state] || 'border-l-gray-600';
 
   const handleStop = async () => {
@@ -48,7 +55,9 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
   };
 
   return (
-    <div className={`animate-card-in bg-gray-900 border border-gray-800 border-l-4 ${borderColor} rounded-lg p-4 flex flex-col gap-3 hover:border-gray-700 hover:shadow-lg hover:shadow-black/20 transition-all`}>
+    <div className={`animate-card-in bg-gray-900 border border-gray-800 border-l-4 ${borderColor} ${
+      status?.kind === 'waiting' ? 'ring-1 ring-amber-600/70' : 'hover:border-gray-700'
+    } rounded-lg p-4 flex flex-col gap-3 hover:shadow-lg hover:shadow-black/20 transition-all`}>
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -80,6 +89,14 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
               >
                 {recreating ? '...' : 'Docker'}
               </button>
+              {instance.hostId && instance.hostId !== 'local' && (
+                <span
+                  className="text-[10px] border rounded px-1 py-0.5 text-purple-300 border-purple-800"
+                  title={`Runs on host ${instance.hostId}`}
+                >
+                  {instance.hostId}
+                </span>
+              )}
               {instance.networkPolicy && (
                 <button
                   onClick={() => onPolicyClick?.({ policy: instance.networkPolicy, instanceId: instance.id })}
@@ -115,17 +132,45 @@ export default function InstanceCard({ instance, managed = true, onStart, onStop
         {instance.status && <span className="ml-2 text-gray-600">({instance.status})</span>}
       </div>
 
+      {/* What this instance last reported: waiting on a human, working, or idle. */}
+      {status && (status.kind === 'waiting' || status.message) && (
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="text-[11px] shrink-0 whitespace-nowrap" style={{ color: status.tone }}>
+            {status.glyph} {status.word}
+          </span>
+          {status.age && <span className="text-[10px] text-gray-600 shrink-0">{status.age}</span>}
+        </div>
+      )}
+      {status?.message && (
+        <div className="text-[11px] text-gray-500 line-clamp-2 break-words" title={status.message}>
+          {status.message}
+        </div>
+      )}
+
       {/* Token / context usage — last reported by the in-container Claude hook */}
       {instance.usage?.contextTokens > 0 && (
         <div
           className="flex items-center gap-1.5 text-[11px] text-gray-400"
-          title={`Context: ${instance.usage.contextTokens.toLocaleString()} tokens${instance.usage.model ? ` · ${instance.usage.model}` : ''}${instance.usage.updatedAt ? ` · updated ${instance.usage.updatedAt} UTC` : ''}`}
+          title={[
+            `Context: ${instance.usage.contextTokens.toLocaleString()} tokens`,
+            split && `fresh input ${split.input.toLocaleString()}`,
+            split && `cache read ${split.cacheRead.toLocaleString()} (${Math.round(split.cachedFraction * 100)}%)`,
+            split && `cache write ${split.cacheCreation.toLocaleString()}`,
+            !split && 'split not reported by this instance’s hook',
+            instance.usage.model,
+            instance.usage.updatedAt && `updated ${instance.usage.updatedAt} UTC`,
+          ].filter(Boolean).join('\n')}
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="text-emerald-500 shrink-0"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zM7.5 4a.5.5 0 011 0v4l2.5 1.5a.5.5 0 01-.5.86L7.75 8.7A.5.5 0 017.5 8.3V4z"/></svg>
           <span className="text-emerald-400 font-medium">{formatTokens(instance.usage.contextTokens)}</span>
           <span className="text-gray-600">ctx</span>
           {instance.usage.outputTokens > 0 && (
             <span className="text-gray-600">· {formatTokens(instance.usage.outputTokens)} out</span>
+          )}
+          {split && (
+            <span className="text-gray-600" title="share of the context replayed from cache">
+              · {Math.round(split.cachedFraction * 100)}% cached
+            </span>
           )}
         </div>
       )}

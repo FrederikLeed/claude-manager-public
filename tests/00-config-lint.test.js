@@ -108,14 +108,40 @@ describe('Workspace config lint', () => {
     it('should bound the curl call so it never blocks Claude', () => {
       assert.ok(/curl[^\n]*-m\s*\d+/.test(script), 'cm-notify curl must use a timeout (-m)');
     });
+
+    it('should never write to stdout — a UserPromptSubmit hook\'s stdout is injected into the prompt', () => {
+      // Claude Code prepends a UserPromptSubmit hook's stdout to the user's
+      // prompt as context. Anything this script prints would silently end up in
+      // every conversation, so every command that could speak must be captured
+      // in a variable or redirected.
+      const lines = script
+        // Join backslash continuations first: a multi-line curl carries its
+        // redirect on the last line, and checking line-by-line misreads it.
+        .replace(/\\\n/g, ' ')
+        .split('\n')
+        .map((l) => l.replace(/#.*$/, '').trim())
+        .filter(Boolean);
+      const speaks = lines.filter((l) =>
+        /^(echo|printf|cat|jq|curl)\b/.test(l)
+        && !/>\s*\/dev\/null/.test(l)
+        && !/>&?\s*2/.test(l));
+      assert.deepEqual(speaks, [], `these lines can reach stdout: ${speaks.join(' | ')}`);
+    });
+
+    it('should always exit 0 — a non-zero UserPromptSubmit hook blocks the prompt', () => {
+      assert.ok(/\nexit 0\n*$/.test(script), 'cm-notify must end with an unconditional exit 0');
+    });
   });
 
   describe('managed-settings.json', () => {
     const raw = readFileSync(path.join(WORKSPACE_DIR, 'config', 'managed-settings.json'), 'utf-8');
     const settings = JSON.parse(raw);
 
-    it('should register cm-notify for Stop and Notification hooks', () => {
-      for (const evt of ['Stop', 'Notification']) {
+    it('should register cm-notify for the Stop, Notification and UserPromptSubmit hooks', () => {
+      // UserPromptSubmit is what separates "waiting on a human" from "the human
+      // answered and Claude is working"; without it a permission prompt the user
+      // already answered reads as still waiting until the turn ends.
+      for (const evt of ['Stop', 'Notification', 'UserPromptSubmit']) {
         const blocks = settings.hooks?.[evt];
         assert.ok(Array.isArray(blocks) && blocks.length > 0, `Missing ${evt} hook`);
         const cmds = blocks.flatMap((b) => (b.hooks || []).map((h) => h.command));

@@ -73,3 +73,57 @@ body {
   position: fixed;
   width: 100%;
 }
+
+/* ── Fleet graph tokens ───────────────────────────────────────────────────
+   Declared once here, consumed from SVG as fill="var(--cm-reach-3)".
+
+   REACH RAMP: the one hue axis on the canvas, spent on the question the owner
+   actually asks — can this reach the internet? It is an ORDINAL ramp, which is
+   legitimate because the four allowlists are genuinely nested
+   (claude-only ⊂ claude-github ⊂ claude-full-dev ⊂ unrestricted). Lightness is
+   strictly monotone (OKLab L 0.433 → 0.527 → 0.622 → 0.764): darkest = tightest.
+   --cm-reach-1 is 2.48:1 on --cm-bg, below the 3:1 mark line, so anything
+   painted with it MUST carry a visible text label. That is not optional. */
+:root {
+  --cm-reach-1: #184f95;   /* claude-only       — tightest */
+  --cm-reach-2: #256abf;   /* claude-github     */
+  --cm-reach-3: #3987e5;   /* claude-full-dev   */
+  --cm-reach-4: #86b6ef;   /* unrestricted      — wide open */
+
+  /* STATUS: reserved. Never a category, never themed. Always shipped with a
+     glyph AND a word, so state is never carried by colour alone. */
+  --cm-good: #0ca30c;
+  --cm-warn: #fab219;
+  --cm-serious: #ec835a;
+  --cm-critical: #d03b3b;
+
+  /* INK: text wears these, never a mark colour. */
+  --cm-ink-1: #f3f4f6;
+  --cm-ink-2: #9ca3af;
+  --cm-ink-3: #6b7280;
+  --cm-ink-4: #4b5563;
+
+  /* SURFACES: anchored to the Tailwind grays the app already uses. */
+  --cm-bg: #030712;
+  --cm-panel: #111827;
+  --cm-line: #1f2937;
+  --cm-line-hi: #374151;
+
+  /* SELECTION: deliberately ink, not blue — blue is the reach ramp. */
+  --cm-select: #f3f4f6;
+}
+
+/* An instance waiting on a human is the most actionable thing in the fleet, so
+   the graph says so from across the room. The glyph and word carry the state;
+   this ring only draws the eye to it. */
+@keyframes cm-attention {
+  0%, 100% { opacity: 0.85; stroke-width: 2; }
+  50% { opacity: 0.25; stroke-width: 5; }
+}
+.cm-attention-ring {
+  animation: cm-attention 1.9s ease-in-out infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-attention-ring { animation: none; opacity: 0.85; }
+}

@@ -46,7 +46,10 @@ export const WS_EVENTS = {
 };
 
 // Claude Code hook events that an instance reports to the manager
-export const INSTANCE_EVENTS = ['Stop', 'Notification'];
+// Lifecycle events the in-container hook reports. Together they are a state
+// machine: Notification = waiting on the human, UserPromptSubmit = answered and
+// working, Stop = turn finished.
+export const INSTANCE_EVENTS = ['Stop', 'Notification', 'UserPromptSubmit'];
 
 export const NETWORK_POLICIES = ['claude-only', 'claude-github', 'claude-full-dev', 'unrestricted'];
 

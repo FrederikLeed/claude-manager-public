@@ -10,6 +10,8 @@
 # though all instances share one ~/.claude/projects transcript directory.
 #
 # Never blocks Claude: short curl timeout, all failures swallowed, always exit 0.
+# Nothing may reach stdout: on UserPromptSubmit, a hook's stdout is prepended to
+# the user's prompt as context, and a non-zero exit blocks the prompt entirely.
 set -uo pipefail
 
 MANAGER="${CM_MANAGER_URL:-}"
@@ -24,12 +26,16 @@ INPUT="$(cat 2>/dev/null || true)"
 
 EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "Stop"' 2>/dev/null)"
 TRANSCRIPT="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
-# Stop carries last_assistant_message; Notification carries message — use either.
-MSG="$(printf '%s' "$INPUT" | jq -r '.message // .last_assistant_message // ""' 2>/dev/null)"
+# Each event names the text differently: Notification has .message, Stop has
+# .last_assistant_message, UserPromptSubmit has .prompt.
+MSG="$(printf '%s' "$INPUT" | jq -r '.message // .last_assistant_message // .prompt // ""' 2>/dev/null)"
 MSG="$(printf '%s' "$MSG" | tr '\n' ' ' | head -c 200)"
 
 CONTEXT=0
 OUT=0
+IN_TOK=0
+CACHE_READ=0
+CACHE_WRITE=0
 MODEL=""
 
 # Read only the tail — the last main-chain assistant message (and its model) is
@@ -37,13 +43,20 @@ MODEL=""
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   TAIL="$(tail -n 200 "$TRANSCRIPT" 2>/dev/null || true)"
   if [ -n "$TAIL" ]; then
-    CONTEXT="$(printf '%s\n' "$TAIL" | jq -s '
+    # The three parts, kept apart: a blended total cannot tell a healthy
+    # cache-read steady state from compaction thrash, and the cache ratio is the
+    # dominant cost lever for a Claude Code fleet.
+    USAGE="$(printf '%s\n' "$TAIL" | jq -c -s '
       [ .[] | select(.type=="assistant" and ((.isSidechain // false) | not) and (.message.usage != null)) ]
-      | (last // {})
-      | ((.message.usage.input_tokens // 0)
-         + (.message.usage.cache_read_input_tokens // 0)
-         + (.message.usage.cache_creation_input_tokens // 0))
+      | (last // {}) | .message.usage // {}
+      | { inp: (.input_tokens // 0),
+          cr:  (.cache_read_input_tokens // 0),
+          cw:  (.cache_creation_input_tokens // 0) }
     ' 2>/dev/null)"
+    IN_TOK="$(printf '%s' "$USAGE" | jq -r '.inp // 0' 2>/dev/null)"
+    CACHE_READ="$(printf '%s' "$USAGE" | jq -r '.cr // 0' 2>/dev/null)"
+    CACHE_WRITE="$(printf '%s' "$USAGE" | jq -r '.cw // 0' 2>/dev/null)"
+    CONTEXT=$(( ${IN_TOK:-0} + ${CACHE_READ:-0} + ${CACHE_WRITE:-0} ))
     OUT="$(printf '%s\n' "$TAIL" | jq -s '
       [ .[] | select(.type=="assistant" and ((.isSidechain // false) | not) and (.message.usage != null)) ]
       | (last // {}) | (.message.usage.output_tokens // 0)
@@ -56,6 +69,9 @@ fi
 
 # Normalise — jq can emit empty/null on odd input.
 case "$CONTEXT" in ''|null) CONTEXT=0 ;; esac
+for v in IN_TOK CACHE_READ CACHE_WRITE; do
+  eval "case \"\$$v\" in ''|null) $v=0 ;; esac"
+done
 case "$OUT" in ''|null) OUT=0 ;; esac
 [ "$MODEL" = "null" ] && MODEL=""
 
@@ -65,10 +81,15 @@ BODY="$(jq -nc \
   --argjson out "$OUT" \
   --arg model "$MODEL" \
   --arg message "$MSG" \
-  '{event:$event, contextTokens:$ctx, outputTokens:$out, model:$model, message:$message}' 2>/dev/null)"
+  --argjson inp "${IN_TOK:-0}" \
+  --argjson cr "${CACHE_READ:-0}" \
+  --argjson cw "${CACHE_WRITE:-0}" \
+  '{event:$event, contextTokens:$ctx, outputTokens:$out, model:$model, message:$message,
+    inputTokens:$inp, cacheReadTokens:$cr, cacheCreationTokens:$cw}' 2>/dev/null)"
 [ -n "$BODY" ] || exit 0
 
 curl -sf -m 5 -X POST "${MANAGER}/api/instances/${INSTANCE}/event" \
+    ${CM_EVENT_TOKEN:+-H "Authorization: Bearer ${CM_EVENT_TOKEN}"} \
   -H "Content-Type: application/json" \
   -d "$BODY" >/dev/null 2>&1 || true
 

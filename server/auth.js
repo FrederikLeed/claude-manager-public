@@ -1,5 +1,9 @@
 import crypto from 'crypto';
-import { getDeviceByTokenHash } from './db.js';
+import { getDeviceByTokenHash, getInstance } from './db.js';
+import { instanceForIp } from './proxy-log.js';
+import { moduleLogger } from './logger.js';
+
+const log = moduleLogger('auth');
 
 const COOKIE_NAME = 'cm_device_token';
 const AUTH_EXEMPT = ['/api/auth/register', '/api/auth/status', '/api/policies'];
@@ -37,6 +41,37 @@ export function normalizePath(rawUrl) {
   return decoded;
 }
 
+/**
+ * Does this request really come from the instance named in its path?
+ *
+ * Two independent proofs, either of which is sufficient:
+ *  - the per-instance token injected as CM_EVENT_TOKEN at create time, or
+ *  - the source address resolving to that same instance's container.
+ *
+ * The address check carries instances created before the token existed; they
+ * can still only speak for themselves, because the IP is their own.
+ */
+async function callerIsInstance(request, claimedId) {
+  if (!claimedId) return false;
+
+  const row = (() => { try { return getInstance(claimedId); } catch { return null; } })();
+
+  const presented = (request.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (row?.event_token && presented) {
+    const expected = Buffer.from(row.event_token);
+    const actual = Buffer.from(hashToken(presented));
+    if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) return true;
+  }
+
+  // No token on record: this instance predates the scheme. Fall back to the
+  // address, which is what the proxy log already uses to attribute denials.
+  const byIp = await instanceForIp(request.ip).catch(() => null);
+  if (byIp?.id && byIp.id === claimedId) return true;
+
+  // A token exists but was wrong or missing, and the address does not match.
+  return false;
+}
+
 export function registerAuthHooks(fastify) {
   fastify.addHook('onRequest', async (request, reply) => {
     const urlPath = normalizePath(request.url);
@@ -46,7 +81,26 @@ export function registerAuthHooks(fastify) {
 
     // Skip auth endpoints
     if (AUTH_EXEMPT.includes(urlPath)) return;
-    if (AUTH_EXEMPT_PATTERNS.some(p => p.test(urlPath))) return;
+
+    // Container callbacks are exempt from DEVICE auth, but not from proving who
+    // they are. The instance id comes from the URL, so without this check any
+    // container on the network — or anything on the LAN that reaches the
+    // manager — could file an access request as a different instance, and an
+    // admin approving it would widen THAT instance's allowlist.
+    const callback = AUTH_EXEMPT_PATTERNS.find((p) => p.test(urlPath));
+    if (callback) {
+      const claimed = urlPath.split('/')[3];
+      const ok = await callerIsInstance(request, claimed);
+      if (!ok) {
+        log.warn(
+          { claimed, ip: request.ip, path: urlPath },
+          'rejected container callback: caller could not prove it is this instance',
+        );
+        reply.code(403).send({ error: 'Caller is not this instance' });
+        return;
+      }
+      return;
+    }
 
     const token = request.cookies?.[COOKIE_NAME];
     if (!token) {

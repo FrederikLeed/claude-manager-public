@@ -1,9 +1,12 @@
 import Docker from 'dockerode';
+import { dockerFor } from './hosts.js';
+import { admit } from './placement.js';
+import { hostPaths, ensureInstanceMemoryDir, managerUrlFor } from './host-fs.js';
 import crypto from 'crypto';
 import { chownSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { config } from './config.js';
-import { getAllInstances } from './db.js';
+import { getAllInstances, getInstance, getHosts, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 import { moduleLogger } from './logger.js';
 
@@ -46,7 +49,17 @@ export function instanceHostname(containerName, id) {
   return (slug || id || 'workspace').slice(0, 63).replace(/-+$/, '') || 'workspace';
 }
 
+// Host-aware Docker access. `docker` stays as the manager's own daemon for the
+// paths that are inherently local (its own container, the workspace build
+// context); anything that touches an instance resolves the client from that
+// instance's host.
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+
+/** Docker client for an instance's host (defaults to the manager's own). */
+async function dockerForInstance(id) {
+  const inst = id ? getInstance(id) : null;
+  return dockerFor(inst?.host_id || DEFAULT_HOST_ID);
+}
 
 // Cache for resolved host paths from manager's own mounts
 let _selfMounts = null;
@@ -166,13 +179,14 @@ export function clearMountTemplate() {
 /**
  * Ensure the manager network exists, creating it if needed.
  */
-export async function ensureNetwork() {
-  const networks = await docker.listNetworks({
+export async function ensureNetwork(client = docker) {
+  // Networks are per daemon: every host needs its own copy of this one.
+  const networks = await client.listNetworks({
     filters: { name: [config.CLAUDE_NETWORK] },
   });
   const exists = networks.some((n) => n.Name === config.CLAUDE_NETWORK);
   if (!exists) {
-    await docker.createNetwork({
+    await client.createNetwork({
       Name: config.CLAUDE_NETWORK,
       Driver: 'bridge',
     });
@@ -183,6 +197,32 @@ export async function ensureNetwork() {
  * List all containers managed by claude-manager.
  * Includes both labeled containers and adopted containers tracked in SQLite.
  */
+/**
+ * Managed containers across every enabled host.
+ *
+ * Returns { containers, polledHosts }: polledHosts is what syncWithDocker may
+ * reconcile against. A host that failed to answer is deliberately absent, so
+ * its instances are never mistaken for deleted ones.
+ */
+export async function listManagedContainersByHost() {
+  const containers = [];
+  const polledHosts = [];
+  for (const host of getHosts({ enabledOnly: true })) {
+    try {
+      const client = await dockerFor(host.id);
+      const labeled = await client.listContainers({
+        all: true,
+        filters: { label: [`${LABELS.MANAGED}=true`] },
+      });
+      for (const c of labeled) containers.push({ ...formatContainerInfo(c), hostId: host.id });
+      polledHosts.push(host.id);
+    } catch (err) {
+      log.warn({ hostId: host.id, err: err.message }, 'skipping unreachable host');
+    }
+  }
+  return { containers, polledHosts };
+}
+
 export async function listManagedContainers() {
   // Get containers with managed label
   const labeledContainers = await docker.listContainers({
@@ -228,14 +268,17 @@ export async function listManagedContainers() {
  * Get detailed info for a single container.
  */
 export async function getContainer(id) {
+  // Same reason as resolveContainer: look on the host that actually runs it.
+  const client = await dockerForInstance(id);
+
   // Try by manager ID label first
-  const containers = await docker.listContainers({
+  const containers = await client.listContainers({
     all: true,
     filters: { label: [`${LABELS.MANAGED}=true`, `${LABELS.ID}=${id}`] },
   });
 
   if (containers.length > 0) {
-    const container = docker.getContainer(containers[0].Id);
+    const container = client.getContainer(containers[0].Id);
     const inspect = await container.inspect();
     return formatInspectInfo(inspect);
   }
@@ -245,7 +288,7 @@ export async function getContainer(id) {
     const { getInstance } = await import('./db.js');
     const dbInst = getInstance(id);
     if (dbInst?.docker_id) {
-      const container = docker.getContainer(dbInst.docker_id);
+      const container = client.getContainer(dbInst.docker_id);
       const inspect = await container.inspect();
       return formatInspectInfo(inspect);
     }
@@ -256,7 +299,7 @@ export async function getContainer(id) {
   // Fall back to name lookup
   const containerName = id.startsWith(CONTAINER_PREFIX) ? id : `${CONTAINER_PREFIX}${id}`;
   try {
-    const container = docker.getContainer(containerName);
+    const container = client.getContainer(containerName);
     const inspect = await container.inspect();
     return formatInspectInfo(inspect);
   } catch (err) {
@@ -268,21 +311,20 @@ export async function getContainer(id) {
 /**
  * Create a new managed container instance.
  */
-export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max' }) {
+export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max', hostId = DEFAULT_HOST_ID }) {
+  // Everything below runs against the chosen host's daemon, and every host path
+  // in the spec has to exist THERE — binds are resolved by the daemon, not here.
+  const host = await admit({ hostId, dockerSocket, networkPolicy });
+  const docker = await dockerFor(host.id);
+  const paths = hostPaths(host);
+  const isLocal = host.kind === 'local';
   const id = crypto.randomUUID().slice(0, 8);
   const slug = name
     ? name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
     : id;
   const containerName = `cm-${slug}-${id}`;
+  const eventToken = crypto.randomBytes(32).toString('base64url');
   const volumeName = `cmv-${slug}-${id}`;
-
-  // Check instance limit
-  const existing = await listManagedContainers();
-  if (existing.length >= config.MAX_INSTANCES) {
-    const err = new Error(`Maximum instance limit (${config.MAX_INSTANCES}) reached`);
-    err.statusCode = 409;
-    throw err;
-  }
 
   // Idempotent: check if container with this name exists
   try {
@@ -296,7 +338,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   // Ensure image is available locally (pull if needed)
   const imageName = image || config.CLAUDE_IMAGE;
   try {
-    await ensureImage(imageName);
+    await ensureImage(imageName, docker);
   } catch (err) {
     const error = new Error(`Failed to pull image "${imageName}": ${err.message}`);
     error.statusCode = err.statusCode || 500;
@@ -305,7 +347,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
 
   // Ensure network exists
   try {
-    await ensureNetwork();
+    await ensureNetwork(docker);
   } catch (err) {
     const error = new Error(`Failed to ensure network "${config.CLAUDE_NETWORK}": ${err.message}`);
     error.statusCode = 500;
@@ -323,12 +365,17 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     }
   }
 
-  // Learn bind mounts from existing containers (shared dirs, .claude config, etc.)
+  // Learn bind mounts from existing containers (shared dirs, .claude config, etc.).
+  // Only on the manager's own host: a learned bind is a path on THIS filesystem,
+  // and replaying it onto another host would point at a directory that either
+  // does not exist there or belongs to something else entirely.
   let templateBinds = [];
-  try {
-    templateBinds = await learnMountTemplate();
-  } catch {
-    // Fall back to config-based mounts if learning fails
+  if (isLocal) {
+    try {
+      templateBinds = await learnMountTemplate();
+    } catch {
+      // Fall back to config-based mounts if learning fails
+    }
   }
 
   // Build final bind list: workspace volume + learned template + config overrides
@@ -337,10 +384,10 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   if (templateBinds.length > 0) {
     // Use learned mounts, but skip any that conflict with explicit config
     const configDests = new Set();
-    if (config.INSTANCE_SHARED_DIR) configDests.add('/shared');
-    if (config.INSTANCE_MEMORY_DIR) configDests.add('/project-memory');
-    if (config.INSTANCE_CLAUDE_DIR) configDests.add('/home/claude/.claude');
-    if (config.INSTANCE_MEMORY_BASE_DIR) configDests.add('/workspace/.claude');
+    if (paths.shared) configDests.add('/shared');
+    if (paths.projectMemory) configDests.add('/project-memory');
+    if (paths.claudeHome) configDests.add('/home/claude/.claude');
+    if (paths.memoryBase) configDests.add('/workspace/.claude');
 
     for (const bind of templateBinds) {
       const dest = bind.split(':')[1];
@@ -350,33 +397,24 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     }
   }
 
-  // Add explicit config-based mounts (override learned ones)
-  if (config.INSTANCE_SHARED_DIR) binds.push(`${config.INSTANCE_SHARED_DIR}:/shared`);
-  if (config.INSTANCE_MEMORY_DIR) binds.push(`${config.INSTANCE_MEMORY_DIR}:/project-memory`);
-  if (config.INSTANCE_CLAUDE_DIR) {
-    binds.push(`${config.INSTANCE_CLAUDE_DIR}:/home/claude/.claude`);
-  } else if (!binds.some(b => b.includes('/home/claude/.claude'))) {
-    // Auto-resolve from manager's own /claude-home mount
+  // Add explicit host-derived mounts (override learned ones)
+  if (paths.shared) binds.push(`${paths.shared}:/shared`);
+  if (paths.projectMemory) binds.push(`${paths.projectMemory}:/project-memory`);
+  if (paths.claudeHome) {
+    binds.push(`${paths.claudeHome}:/home/claude/.claude`);
+  } else if (isLocal && !binds.some((b) => b.includes('/home/claude/.claude'))) {
+    // Auto-resolve from the manager's own /claude-home mount. Self-inspection
+    // only makes sense for the host the manager runs on.
     const claudeHomeHost = await resolveHostPath('/claude-home');
     if (claudeHomeHost) binds.push(`${claudeHomeHost}:/home/claude/.claude`);
   }
 
-  // Per-instance project memory: <base>/<slug>/ → /workspace/.claude
-  if (config.INSTANCE_MEMORY_BASE_DIR) {
-    // Pre-create the directory via the manager's own mount
-    // (/instance-memory), owned by the container's claude user: the manager
-    // runs as root, and a root-owned mount leaves Claude unable to write its
-    // memory there.
-    try {
-      mkdirSync(`/instance-memory/${slug}/memory`, { recursive: true });
-      chownSync(`/instance-memory/${slug}`, CLAUDE_UID, CLAUDE_GID);
-      chownSync(`/instance-memory/${slug}/memory`, CLAUDE_UID, CLAUDE_GID);
-    } catch (err) {
-      log.warn({ err: err.message, slug }, 'could not prepare per-instance memory directory');
-    }
-    const instanceMemoryPath = `${config.INSTANCE_MEMORY_BASE_DIR}/${slug}`;
+  // Per-instance project memory: <base>/<slug>/ → /workspace/.claude, created
+  // on whichever host will run this instance and owned by the Claude user.
+  if (paths.memoryBase) {
+    const instanceMemoryPath = await ensureInstanceMemoryDir(host, slug);
     binds.push(`${instanceMemoryPath}:/workspace/.claude`);
-    log.info({ containerName, instanceMemoryPath }, 'per-instance memory');
+    log.info({ containerName, instanceMemoryPath, hostId: host.id }, 'per-instance memory');
   }
 
   // Optionally mount Docker socket for container management access
@@ -395,7 +433,11 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     `PROJECT_NAME=${name || 'unnamed'}`,
     `PROJECT_SLUG=${slug}`,
     `CM_INSTANCE_ID=${id}`,
-    `CM_MANAGER_URL=${MANAGER_URL}`,
+    // Proves to the manager that a callback really comes from THIS instance.
+    // Without it the auth-exempt endpoints take the instance from the URL, so
+    // any container could file an access request as any other instance.
+    `CM_EVENT_TOKEN=${eventToken}`,
+    `CM_MANAGER_URL=${managerUrlFor(host, MANAGER_URL)}`,
     `CM_NETWORK_POLICY=${networkPolicy || 'unrestricted'}`,
     ...managedSecretEnv(),
     ...env,
@@ -486,7 +528,8 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   }
 
   const inspect = await container.inspect();
-  return formatInspectInfo(inspect);
+  // The caller persists only the hash; the raw token lives in the container env.
+  return { ...formatInspectInfo(inspect), eventToken };
 }
 
 /**
@@ -653,8 +696,9 @@ export async function getDockerInfo() {
 /**
  * Get Docker event stream filtered to managed containers.
  */
-export async function getEventStream() {
-  const stream = await docker.getEvents({
+export async function getEventStream(hostId = DEFAULT_HOST_ID) {
+  const client = await dockerFor(hostId);
+  const stream = await client.getEvents({
     filters: {
       label: [`${LABELS.MANAGED}=true`],
       type: ['container'],
@@ -869,18 +913,18 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
 /**
  * Check if an image exists locally, pull it if not.
  */
-async function ensureImage(imageName) {
+async function ensureImage(imageName, client = docker) {
   try {
-    const img = docker.getImage(imageName);
+    const img = client.getImage(imageName);
     await img.inspect();
-    // Image exists locally
+    // Image exists on this host
   } catch (err) {
     if (err.statusCode === 404) {
-      // Pull the image
-      const stream = await docker.pull(imageName);
+      // Pull the image onto this host
+      const stream = await client.pull(imageName);
       // Wait for pull to complete
       await new Promise((resolve, reject) => {
-        docker.modem.followProgress(stream, (err) => {
+        client.modem.followProgress(stream, (err) => {
           if (err) reject(err);
           else resolve();
         });
@@ -892,14 +936,17 @@ async function ensureImage(imageName) {
 }
 
 async function resolveContainer(id) {
+  // The instance may live on another host; the local daemon would 404 it.
+  const client = await dockerForInstance(id);
+
   // Try by label first
-  const containers = await docker.listContainers({
+  const containers = await client.listContainers({
     all: true,
     filters: { label: [`${LABELS.MANAGED}=true`, `${LABELS.ID}=${id}`] },
   });
 
   if (containers.length > 0) {
-    return docker.getContainer(containers[0].Id);
+    return client.getContainer(containers[0].Id);
   }
 
   // Try by SQLite docker_id mapping (adopted containers)
@@ -907,7 +954,7 @@ async function resolveContainer(id) {
     const { getInstance } = await import('./db.js');
     const dbInst = getInstance(id);
     if (dbInst?.docker_id) {
-      const container = docker.getContainer(dbInst.docker_id);
+      const container = client.getContainer(dbInst.docker_id);
       await container.inspect(); // verify it exists
       return container;
     }
@@ -922,7 +969,7 @@ async function resolveContainer(id) {
 
   // Try by name
   const containerName = id.startsWith(CONTAINER_PREFIX) ? id : `${CONTAINER_PREFIX}${id}`;
-  const container = docker.getContainer(containerName);
+  const container = client.getContainer(containerName);
 
   // Verify it exists
   try {

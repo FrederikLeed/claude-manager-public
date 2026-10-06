@@ -111,6 +111,11 @@ export default async function accessRequestRoutes(fastify) {
 
   // Approve a request
   fastify.post('/api/access-requests/:requestId/approve', async (request, reply) => {
+    // Resolving a request edits what an instance may reach, so it is an admin
+    // action — any approved device could do it before.
+    if (!request.device?.is_admin) {
+      return reply.code(403).send({ error: 'Admin device required' });
+    }
     const { requestId } = request.params;
     const { expiryHours } = request.body || {};
     const req = getAccessRequestById(parseInt(requestId));
@@ -168,6 +173,11 @@ export default async function accessRequestRoutes(fastify) {
 
   // Deny a request
   fastify.post('/api/access-requests/:requestId/deny', async (request, reply) => {
+    // Resolving a request edits what an instance may reach, so it is an admin
+    // action — any approved device could do it before.
+    if (!request.device?.is_admin) {
+      return reply.code(403).send({ error: 'Admin device required' });
+    }
     const { requestId } = request.params;
     const req = getAccessRequestById(parseInt(requestId));
     if (!req) {

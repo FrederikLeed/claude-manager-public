@@ -26,7 +26,11 @@ const seen = new Map(); // `${instance}|${host}` -> { at, suppressed }
 const recent = [];
 
 let ipCache = { at: 0, map: new Map() };
-async function instanceForIp(ip) {
+/**
+ * Which instance owns this container IP. Used for denial attribution, and to
+ * check that a container claiming to be an instance is that instance.
+ */
+export async function instanceForIp(ip) {
   if (Date.now() - ipCache.at > 30_000) {
     const map = new Map();
     const containers = await docker.listContainers({ filters: { label: [`${LABELS.MANAGED}=true`] } });
@@ -61,9 +65,57 @@ export function parseSquidLine(line) {
   return { ip, result, status: Number(status), method, host, denied: result.includes('DENIED') };
 }
 
+// Rolling request rates per instance, in 10s buckets over one minute. The
+// access log already streams past us for denial detection; counting what is
+// ALLOWED too is free, and it is the only honest source of "this instance is
+// actually talking to the internet right now".
+const RATE_BUCKETS = 6;
+const BUCKET_MS = 10_000;
+const rates = new Map();   // key: instance id or ip → { buckets: [{allowed,denied}], at }
+
+function bump(key, denied) {
+  const now = Date.now();
+  let r = rates.get(key);
+  const slot = Math.floor(now / BUCKET_MS);
+  if (!r) { r = { slot, buckets: Array.from({ length: RATE_BUCKETS }, () => ({ allowed: 0, denied: 0 })) }; rates.set(key, r); }
+  // Advance and clear whatever time has passed, so a quiet instance decays to zero.
+  const advance = Math.min(slot - r.slot, RATE_BUCKETS);
+  for (let i = 0; i < advance; i++) {
+    r.buckets.shift();
+    r.buckets.push({ allowed: 0, denied: 0 });
+  }
+  r.slot = slot;
+  const head = r.buckets[r.buckets.length - 1];
+  if (denied) head.denied++; else head.allowed++;
+}
+
+/**
+ * Requests per minute per instance over the last minute.
+ * Returns { [instanceId]: { allowed, denied } } — counts, not estimates.
+ */
+export function getTrafficRates() {
+  const out = {};
+  const slot = Math.floor(Date.now() / BUCKET_MS);
+  for (const [key, r] of rates) {
+    // Anything older than the window contributes nothing.
+    const stale = slot - r.slot;
+    if (stale >= RATE_BUCKETS) { rates.delete(key); continue; }
+    const live = stale > 0 ? r.buckets.slice(stale) : r.buckets;
+    const allowed = live.reduce((n, b) => n + b.allowed, 0);
+    const denied = live.reduce((n, b) => n + b.denied, 0);
+    if (allowed || denied) out[key] = { allowed, denied };
+  }
+  return out;
+}
+
 async function handleLine(line) {
   const entry = parseSquidLine(line);
-  if (!entry || !entry.denied) return;
+  if (!entry) return;
+  // Count first: rates cover allowed traffic too, and the denial path below
+  // deliberately suppresses repeats, which would skew a rate.
+  const rateInst = await instanceForIp(entry.ip).catch(() => null);
+  bump(rateInst?.id || entry.ip, entry.denied);
+  if (!entry.denied) return;
   const inst = await instanceForIp(entry.ip).catch(() => null);
   const key = `${inst?.id || entry.ip}|${entry.host}`;
   const now = Date.now();

@@ -3,6 +3,7 @@ import StatusBadge from './StatusBadge.jsx';
 import GrantBadge from './GrantBadge.jsx';
 import { AccessRequestBadge } from './AccessRequests.jsx';
 import { formatTokens } from '../lib/notify.js';
+import { instanceStatus, contextSplit } from '../lib/instance-status.js';
 
 function timeAgo(unixTimestamp) {
   const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
@@ -26,6 +27,9 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
   };
   const isRunning = instance.state === 'running';
   const isStopped = instance.state === 'exited' || instance.state === 'created';
+  const status = managed ? instanceStatus(instance) : null;
+  const waiting = status?.kind === 'waiting';
+  const split = contextSplit(instance.usage);
 
   const handleStop = async () => {
     setStopping(true);
@@ -39,7 +43,11 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
   };
 
   return (
-    <div className="animate-card-in bg-gray-900 border border-gray-800 rounded-lg hover:border-gray-700 transition-all">
+    <div
+      className={`animate-card-in bg-gray-900 border rounded-lg transition-all ${
+        waiting ? 'border-amber-700/70 hover:border-amber-600' : 'border-gray-800 hover:border-gray-700'
+      }`}
+    >
       {/* Main row */}
       <div className="flex items-center gap-2 sm:gap-3 px-3 py-2.5">
         {/* Status dot */}
@@ -109,9 +117,21 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
             {instance.usage?.contextTokens > 0 && (
               <span
                 className="text-[10px] rounded px-1 py-0.5 shrink-0 hidden md:inline-flex items-center gap-1 text-emerald-400 border border-emerald-900"
-                title={`Context: ${instance.usage.contextTokens.toLocaleString()} tokens${instance.usage.model ? ` · ${instance.usage.model}` : ''}`}
+                title={[
+                  `Context: ${instance.usage.contextTokens.toLocaleString()} tokens`,
+                  split && `fresh input ${split.input.toLocaleString()}`,
+                  split && `cache read ${split.cacheRead.toLocaleString()} (${Math.round(split.cachedFraction * 100)}%)`,
+                  split && `cache write ${split.cacheCreation.toLocaleString()}`,
+                  !split && 'split not reported by this instance’s hook',
+                  instance.usage.model,
+                ].filter(Boolean).join('\n')}
               >
                 {formatTokens(instance.usage.contextTokens)} ctx
+                {split && (
+                  <span className="text-emerald-700 hidden lg:inline">
+                    {Math.round(split.cachedFraction * 100)}% cached
+                  </span>
+                )}
               </span>
             )}
             {instance.scan && (instance.scan.verifiedSecrets > 0 || instance.scan.critical > 0) && (
@@ -223,6 +243,24 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
           )}
         </div>
       </div>
+
+      {/* What this instance last reported. Shown only when there is something to
+          say: a waiting instance always, anything else only with a message. */}
+      {status && (waiting || status.message) && (
+        <div className="flex items-baseline gap-2 px-3 pb-2 -mt-0.5 border-t border-gray-800/40 pt-1.5">
+          <span className="text-[10px] shrink-0 whitespace-nowrap" style={{ color: status.tone }}>
+            {status.glyph} {status.word}
+          </span>
+          {status.message && (
+            <span className="text-[11px] text-gray-500 truncate min-w-0 flex-1" title={status.message}>
+              {status.message}
+            </span>
+          )}
+          {status.age && (
+            <span className="text-[10px] text-gray-600 shrink-0 ml-auto">{status.age}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -3,8 +3,12 @@ import { config } from '../config.js';
 import { getActivityLog } from '../db.js';
 import { getHealthReport, runHealthCheck } from '../health.js';
 import { getRecentDenials } from '../proxy-log.js';
+import { buildTopology } from '../topology.js';
 
 export default async function systemRoutes(fastify) {
+  // The fleet as a graph: hosts, their instances, egress paths and model routes.
+  fastify.get('/api/topology', async () => buildTopology());
+
   fastify.get('/api/system', async () => {
     const [dockerInfo, managed] = await Promise.all([
       getDockerInfo(),

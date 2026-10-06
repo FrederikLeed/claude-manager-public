@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const POLICY_OPTIONS = [
   { value: 'unrestricted', label: 'Unrestricted (no firewall)', badge: null },
@@ -32,6 +32,21 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
   const [expiryHours, setExpiryHours] = useState(24);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [hosts, setHosts] = useState([]);
+  const [hostId, setHostId] = useState('local');
+
+  useEffect(() => {
+    // Only hosts that accept instances are offerable: a production host may be
+    // registered and watched without ever being a placement target.
+    fetch('/api/hosts')
+      .then((r) => (r.ok ? r.json() : { hosts: [] }))
+      .then((d) => {
+        const usable = (d.hosts || []).filter((h) => h.enabled && h.acceptsInstances);
+        setHosts(usable);
+        if (usable.length && !usable.some((h) => h.id === 'local')) setHostId(usable[0].id);
+      })
+      .catch(() => setHosts([]));
+  }, []);
 
   const needsExpiry = dockerSocket || networkPolicy === 'unrestricted';
 
@@ -48,6 +63,7 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
         dockerSocket,
         networkPolicy,
         llmBackend,
+        hostId,
       };
       if (needsExpiry && expiryHours > 0) {
         opts.expiryHours = expiryHours;
@@ -104,6 +120,26 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
             />
           </div>
+
+          {hosts.length > 0 && (
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Host</label>
+              <select
+                value={hostId}
+                onChange={(e) => setHostId(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 text-sm focus:outline-none focus:border-blue-500"
+              >
+                {hosts.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.name}{h.status === 'error' ? ' — unreachable' : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                The instance and its workspace volume stay on this host.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm text-gray-400 mb-1">Network policy</label>

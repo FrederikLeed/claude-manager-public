@@ -1,6 +1,7 @@
 /**
  * Instance event/usage tests — the per-instance lifecycle event endpoint that
- * the in-container Claude Code Stop/Notification hook (cm-notify) posts to.
+ * the in-container Claude Code hook (cm-notify) posts to on Stop, Notification
+ * and UserPromptSubmit.
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,6 +62,76 @@ describe('Instance events + usage', () => {
     } finally {
       conn.close();
     }
+  });
+
+  it('stores the three parts of the context window separately', async () => {
+    const res = await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      cookie: 'none=none',
+      body: {
+        event: 'Stop',
+        contextTokens: 10_000, outputTokens: 500,
+        inputTokens: 1000, cacheReadTokens: 8000, cacheCreationTokens: 1000,
+      },
+    });
+    assert.equal(res.status, 202, res.text);
+
+    const list = await api('/api/instances');
+    const inst = list.json.find((i) => i.id === instanceId);
+    assert.deepEqual(inst.usage.split, { input: 1000, cacheRead: 8000, cacheCreation: 1000 });
+    assert.equal(inst.usage.contextTokens, 10_000);
+  });
+
+  it('derives the total from the parts when an older hook sends no total', async () => {
+    await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      body: { event: 'Stop', inputTokens: 200, cacheReadTokens: 300, cacheCreationTokens: 500 },
+    });
+    const list = await api('/api/instances');
+    const inst = list.json.find((i) => i.id === instanceId);
+    assert.equal(inst.usage.contextTokens, 1000, 'total should be the sum of the parts');
+  });
+
+  it('reports no split at all rather than zeros when only a total arrives', async () => {
+    await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      body: { event: 'Stop', contextTokens: 4242 },
+    });
+    const list = await api('/api/instances');
+    const inst = list.json.find((i) => i.id === instanceId);
+    assert.equal(inst.usage.contextTokens, 4242);
+    assert.equal(inst.usage.split, null, 'unknown must not be reported as a 0% cache hit rate');
+  });
+
+  it('persists the status message and replaces it on the next event', async () => {
+    await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      body: { event: 'Notification', message: 'Claude needs your permission to use Bash' },
+    });
+    let inst = (await api('/api/instances')).json.find((i) => i.id === instanceId);
+    assert.equal(inst.usage.statusMessage, 'Claude needs your permission to use Bash');
+    assert.equal(inst.usage.lastEvent, 'Notification');
+
+    // The message belongs to the event. A Stop with nothing to say must clear it,
+    // or the dashboard keeps claiming the instance is waiting for permission.
+    await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      body: { event: 'Stop', contextTokens: 10 },
+    });
+    inst = (await api('/api/instances')).json.find((i) => i.id === instanceId);
+    assert.equal(inst.usage.statusMessage, null, 'a stale permission prompt must not survive a Stop');
+    assert.equal(inst.usage.lastEvent, 'Stop');
+  });
+
+  it('accepts UserPromptSubmit — the event that distinguishes waiting from working', async () => {
+    const res = await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      body: { event: 'UserPromptSubmit', message: 'fix the auth bug', contextTokens: 1234 },
+    });
+    assert.equal(res.status, 202, res.text);
+    const inst = (await api('/api/instances')).json.find((i) => i.id === instanceId);
+    assert.equal(inst.usage.lastEvent, 'UserPromptSubmit');
+    assert.equal(inst.usage.statusMessage, 'fix the auth bug');
   });
 
   it('ignores usage for unknown event names', async () => {

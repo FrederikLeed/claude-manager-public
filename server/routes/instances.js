@@ -1,5 +1,6 @@
 import {
   listManagedContainers,
+  listManagedContainersByHost,
   getContainer,
   createInstance,
   startInstance,
@@ -13,6 +14,7 @@ import {
 } from '../docker.js';
 import {
   upsertInstance,
+  DEFAULT_HOST_ID,
   getInstance,
   getAllInstances,
   updateInstance,
@@ -26,8 +28,10 @@ import {
   deleteInstanceUsage,
   setInstanceClaudeVersion,
   deleteInstanceScan,
+  getHosts,
 } from '../db.js';
 import { WS_EVENTS, NETWORK_POLICIES, INSTANCE_EVENTS } from '../../shared/constants.js';
+import { hashToken } from '../auth.js';
 import { getCurrentImageVersion } from '../workspace-image.js';
 import { getAllScanSummaries } from '../security-scan.js';
 import { createGrantsForInstance } from '../grants.js';
@@ -35,7 +39,11 @@ import { isAvailable as litellmAvailable, createVirtualKey, deleteVirtualKey } f
 import { writeContainerACL, removeContainerACL, syncAllACLs } from '../proxy.js';
 
 const connectedClients = new Set();
-let eventStream = null;
+// One event stream per host. A single stream only ever watched the manager's
+// own daemon, so an instance on any other host never updated in the dashboard —
+// it just looked frozen.
+const eventStreams = new Map();   // hostId -> stream
+let streamReconcile = null;
 
 export default async function instanceRoutes(fastify) {
   // --- WebSocket: real-time state events ---
@@ -88,9 +96,9 @@ export default async function instanceRoutes(fastify) {
 
   // List all managed instances
   fastify.get('/api/instances', async () => {
-    const dockerContainers = await listManagedContainers();
+    const { containers } = await listManagedContainersByHost();
     const dbInstances = getAllInstances();
-    return mergeInstances(dockerContainers, dbInstances);
+    return mergeInstances(containers, dbInstances);
   });
 
   // Create new instance
@@ -109,19 +117,36 @@ export default async function instanceRoutes(fastify) {
           networkPolicy: { type: 'string', enum: NETWORK_POLICIES, default: 'unrestricted' },
           llmBackend: { type: 'string', enum: ['claude-max', 'local-llm', 'foundry', 'foundry-latest'], default: 'claude-max' },
           expiryHours: { type: 'number', minimum: 0 },
+          hostId: { type: 'string', minLength: 1, maxLength: 32 },
         },
       },
     },
   }, async (request, reply) => {
-    const { name, image, notes, tags, autoStart, dockerSocket, networkPolicy, llmBackend, expiryHours } = request.body;
+    const { name, image, notes, tags, autoStart, dockerSocket, networkPolicy, llmBackend, expiryHours, hostId } = request.body;
 
-    const instance = await createInstance({ name, image, autoStart, dockerSocket, networkPolicy: networkPolicy || 'unrestricted', llmBackend: llmBackend || 'claude-max' });
+    let instance;
+    try {
+      instance = await createInstance({
+        name, image, autoStart, dockerSocket,
+        networkPolicy: networkPolicy || 'unrestricted',
+        llmBackend: llmBackend || 'claude-max',
+        hostId: hostId || DEFAULT_HOST_ID,
+      });
+    } catch (err) {
+      // Placement refusals carry their own status and a machine-readable code.
+      if (err.statusCode && err.code) return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      throw err;
+    }
     upsertInstance({
       id: instance.id,
       name,
       image: instance.image,
       notes,
       tags,
+      hostId: hostId || DEFAULT_HOST_ID,
+      // Store the digest only. The instance keeps the token in its env and
+      // presents it on every callback.
+      eventToken: instance.eventToken ? hashToken(instance.eventToken) : null,
     });
 
     // Stamp the Claude Code version this instance launched on (for update badge)
@@ -210,19 +235,33 @@ export default async function instanceRoutes(fastify) {
           event: { type: 'string' },
           contextTokens: { type: 'number', minimum: 0, default: 0 },
           outputTokens: { type: 'number', minimum: 0, default: 0 },
+          // The three parts of the context window, reported separately since
+          // workspace image 2026-10. An older hook sends only contextTokens.
+          inputTokens: { type: 'number', minimum: 0, default: 0 },
+          cacheReadTokens: { type: 'number', minimum: 0, default: 0 },
+          cacheCreationTokens: { type: 'number', minimum: 0, default: 0 },
           model: { type: 'string' },
-          message: { type: 'string' },
+          message: { type: 'string', maxLength: 500 },
         },
       },
     },
   }, async (request, reply) => {
     const { id } = request.params;
-    const { event, contextTokens = 0, outputTokens = 0, model, message } = request.body || {};
+    const {
+      event, contextTokens = 0, outputTokens = 0, model, message,
+      inputTokens = 0, cacheReadTokens = 0, cacheCreationTokens = 0,
+    } = request.body || {};
 
     // Only persist usage for known lifecycle events; ignore unknown noise.
     const known = INSTANCE_EVENTS.includes(event);
     if (known) {
-      setInstanceUsage(id, { contextTokens, outputTokens, model, event });
+      setInstanceUsage(id, {
+        // An old hook reports only the total; a new one reports the parts and
+        // the total. Prefer whichever is actually populated over trusting one.
+        contextTokens: contextTokens || (inputTokens + cacheReadTokens + cacheCreationTokens),
+        outputTokens, inputTokens, cacheReadTokens, cacheCreationTokens,
+        statusMessage: message, model, event,
+      });
     }
 
     const dbData = getInstance(id);
@@ -232,7 +271,14 @@ export default async function instanceRoutes(fastify) {
       name: dbData?.name || id,
       event: event || 'Stop',
       message: message || null,
-      usage: { contextTokens, outputTokens, model: model || null },
+      usage: {
+        contextTokens: contextTokens || (inputTokens + cacheReadTokens + cacheCreationTokens),
+        outputTokens,
+        split: (inputTokens || cacheReadTokens || cacheCreationTokens)
+          ? { input: inputTokens, cacheRead: cacheReadTokens, cacheCreation: cacheCreationTokens }
+          : null,
+        model: model || null,
+      },
       timestamp: Date.now(),
     });
 
@@ -399,6 +445,8 @@ function mergeInstances(dockerContainers, dbInstances) {
     const usageRow = usageMap.get(container.id);
     return {
       ...container,
+      // Which host runs this instance. Docker does not know; the registry does.
+      hostId: container.hostId || dbData?.host_id || DEFAULT_HOST_ID,
       name: dbData?.name || container.name,
       notes: dbData?.notes || null,
       tags: dbData?.tags || [],
@@ -410,6 +458,16 @@ function mergeInstances(dockerContainers, dbInstances) {
       usage: usageRow ? {
         contextTokens: usageRow.context_tokens,
         outputTokens: usageRow.output_tokens,
+        // null, not zeros: an instance last seen by an older hook has a total
+        // but no split, and "0 cached" would be a different claim from "unknown".
+        split: (usageRow.input_tokens || usageRow.cache_read_tokens || usageRow.cache_creation_tokens)
+          ? {
+            input: usageRow.input_tokens,
+            cacheRead: usageRow.cache_read_tokens,
+            cacheCreation: usageRow.cache_creation_tokens,
+          }
+          : null,
+        statusMessage: usageRow.status_message || null,
         model: usageRow.model,
         lastEvent: usageRow.last_event,
         updatedAt: usageRow.updated_at,
@@ -463,13 +521,15 @@ function scheduleAclResync(log) {
   }, 1500);
 }
 
-async function startEventStream(log) {
+async function startHostEventStream(log, hostId) {
+  if (eventStreams.has(hostId)) return;
   try {
-    eventStream = await getEventStream();
-    log.info('Docker event stream connected');
+    const stream = await getEventStream(hostId);
+    eventStreams.set(hostId, stream);
+    log.info({ hostId }, 'Docker event stream connected');
 
     let pending = '';
-    eventStream.on('data', (chunk) => {
+    stream.on('data', (chunk) => {
       // Events are newline-delimited JSON; a chunk may hold several or a partial one
       pending += chunk.toString();
       const lines = pending.split('\n');
@@ -512,24 +572,44 @@ async function startEventStream(log) {
       }
     });
 
-    eventStream.on('error', (err) => {
-      log.error({ err }, 'Docker event stream error, reconnecting...');
-      setTimeout(() => startEventStream(log), 3000);
-    });
+    // 'error' and 'end' both fire on a dropped stream; the identity check keeps
+    // that from starting two reconnect chains for the same host.
+    const retry = (why) => {
+      if (eventStreams.get(hostId) !== stream) return;
+      eventStreams.delete(hostId);
+      try { stream.destroy(); } catch { /* already gone */ }
+      log.warn({ hostId }, `Docker event stream ${why}, reconnecting...`);
+      setTimeout(() => startHostEventStream(log, hostId), 3000);
+    };
 
-    eventStream.on('end', () => {
-      log.warn('Docker event stream ended, reconnecting...');
-      setTimeout(() => startEventStream(log), 3000);
-    });
+    stream.on('error', (err) => { log.error({ err, hostId }, 'Docker event stream error'); retry('errored'); });
+    stream.on('end', () => retry('ended'));
   } catch (err) {
-    log.error({ err }, 'Failed to start Docker event stream, retrying...');
-    setTimeout(() => startEventStream(log), 5000);
+    eventStreams.delete(hostId);
+    log.error({ err, hostId }, 'Failed to start Docker event stream, retrying...');
+    setTimeout(() => startHostEventStream(log, hostId), 5000);
   }
 }
 
+/**
+ * Watch every enabled host, and keep watching: hosts can be registered at
+ * runtime, and a host that was unreachable at boot must not stay unwatched.
+ */
+function startEventStream(log) {
+  const reconcile = () => {
+    let hosts;
+    try { hosts = getHosts({ enabledOnly: true }); } catch { return; }
+    for (const h of hosts) startHostEventStream(log, h.id);
+  };
+  reconcile();
+  streamReconcile = setInterval(reconcile, 60_000);
+  streamReconcile.unref?.();
+}
+
 export function stopEventStream() {
-  if (eventStream) {
-    eventStream.destroy();
-    eventStream = null;
+  if (streamReconcile) { clearInterval(streamReconcile); streamReconcile = null; }
+  for (const [hostId, stream] of eventStreams) {
+    try { stream.destroy(); } catch { /* already gone */ }
+    eventStreams.delete(hostId);
   }
 }

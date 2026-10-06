@@ -44,9 +44,12 @@ Everything Claude Manager gives the operator, on one page.
 - Tabbed panel with Windows Terminal-style tab management; reconnect without losing state
 
 **Notifications & usage tracking**
-- Each container reports Claude Code lifecycle events to the manager via a baked-in `Stop`/`Notification` hook (`cm-notify`)
+- Each container reports Claude Code lifecycle events to the manager via a baked-in `Stop` / `Notification` / `UserPromptSubmit` hook (`cm-notify`)
 - Dashboard raises a desktop notification, in-app toast, and chime when Claude finishes a turn or needs attention — toggle with the bell in the header
+- **Which instances are waiting on you.** The three events are a state machine — `Notification` = waiting on a human, `UserPromptSubmit` = answered and working, `Stop` = turn finished — so an instance blocked on a permission prompt is marked `⏸ needs input`, floated to the top of the list, counted in the header, and ringed in the fleet graph. `UserPromptSubmit` is what makes it trustworthy: without it, a prompt you already answered in the terminal still reads as waiting until the turn ends.
+- The last thing each instance said (or asked) is shown beneath its row
 - Live per-instance **context / token usage** badge, attributed reliably by the container's own ID (works even though instances share one transcript directory)
+- Context is reported as its **three parts** — fresh input, cache read, cache write — not one blended total, because the cache ratio is what distinguishes a cheap long session from compaction thrash. An instance last seen by an older hook reports no split at all rather than a misleading 0%
 
 **Always-latest Claude Code**
 - The manager checks npm daily and rebuilds the workspace image (over the Docker API) whenever a newer Claude Code is published, so **new instances always launch on the latest** — plus a manual "Rebuild" button in the header

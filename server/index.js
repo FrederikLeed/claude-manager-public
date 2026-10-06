@@ -9,7 +9,8 @@ import fastifyCookie from '@fastify/cookie';
 
 import { config } from './config.js';
 import { initDb, syncWithDocker, closeDb } from './db.js';
-import { ensureNetwork, listManagedContainers } from './docker.js';
+import { ensureNetwork, listManagedContainersByHost } from './docker.js';
+import { pingAllHosts } from './hosts.js';
 import { registerAuthHooks, normalizePath } from './auth.js';
 import instanceRoutes, { stopEventStream, broadcast } from './routes/instances.js';
 import terminalRoutes, { closeAllSessions, getActiveSessionCount } from './routes/terminal.js';
@@ -23,6 +24,7 @@ import accessRequestRoutes from './routes/access-requests.js';
 import workspaceImageRoutes from './routes/workspace-image.js';
 import securityScanRoutes from './routes/security-scan.js';
 import connectivityCheckRoutes from './routes/connectivity-check.js';
+import hostRoutes from './routes/hosts.js';
 import { checkExpiredGrants } from './grants.js';
 import { syncAllACLs } from './proxy.js';
 import { initImageState, checkAndMaybeRebuild, setImageBroadcaster } from './workspace-image.js';
@@ -113,6 +115,7 @@ async function start() {
   await fastify.register(workspaceImageRoutes);
   await fastify.register(securityScanRoutes);
   await fastify.register(connectivityCheckRoutes);
+  await fastify.register(hostRoutes);
 
   // Let the workspace-image, scan and connectivity modules push status over the dashboard WS channel
   setImageBroadcaster(broadcast);
@@ -163,14 +166,31 @@ async function start() {
     initDb();
     fastify.log.info(`Database initialized at ${config.DATA_DIR}/manager.db`);
 
+    // Learn each host's real identity from its daemon, so the fleet is labelled
+    // with machine names rather than 'local'.
+    await pingAllHosts();
+
     // Ensure Docker network exists
     await ensureNetwork();
     fastify.log.info(`Docker network "${config.CLAUDE_NETWORK}" ready`);
 
-    // Sync SQLite with Docker
-    const containers = await listManagedContainers();
-    syncWithDocker(containers);
-    fastify.log.info(`Synced ${containers.length} managed containers`);
+    // Sync SQLite with Docker, across every enabled host. Hosts that did not
+    // answer are excluded from reconciliation rather than treated as empty.
+    const { containers, polledHosts } = await listManagedContainersByHost();
+    const { reapSkipped } = syncWithDocker(containers, polledHosts);
+    fastify.log.info(
+      { hosts: polledHosts },
+      `Synced ${containers.length} managed containers across ${polledHosts.length} host(s)`,
+    );
+    // A host that answered with an empty list while the DB holds instances for it
+    // is not an empty host — it is a host whose daemon came up with the wrong
+    // state. Never silently reconcile that away.
+    for (const s of reapSkipped) {
+      fastify.log.warn(
+        { module: 'fleet', hostId: s.hostId, rows: s.rows },
+        `host ${s.hostId} reported no managed containers but ${s.rows} instance(s) are on record — not reaping`,
+      );
+    }
 
     // Sync proxy ACLs for all running containers
     await syncAllACLs();

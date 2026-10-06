@@ -6,6 +6,11 @@ set -euo pipefail
 MANAGER="${CM_MANAGER_URL:-}"
 INSTANCE="${CM_INSTANCE_ID:-}"
 API="${MANAGER}/api"
+# Proves to the manager that this really is this instance. Without it the
+# manager cannot tell one container's claim from another's, and the callback
+# endpoints refuse the request.
+AUTH=()
+[ -n "${CM_EVENT_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer ${CM_EVENT_TOKEN}")
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -18,7 +23,7 @@ cmd_list() {
   check_env
   echo "Available network policies:"
   echo ""
-  curl -sf "${API}/policies" | jq -r '
+  curl "${AUTH[@]}" -sf "${API}/policies" | jq -r '
     .[] | "  \(.id)\n    \(.description)\n    Hosts: \(
       if .unrestricted then "ALL (unrestricted)"
       elif (.allowedHosts | length) > 0 then (.allowedHosts | join(", "))
@@ -31,7 +36,7 @@ cmd_show() {
   check_env
   local policy="${1:-}"
   [ -n "$policy" ] || die "Usage: cm-access --show <policy-name>"
-  curl -sf "${API}/policies" | jq -r --arg p "$policy" '
+  curl "${AUTH[@]}" -sf "${API}/policies" | jq -r --arg p "$policy" '
     .[] | select(.id == $p or .name == $p) |
     "Policy: \(.id)\nDescription: \(.description)\nUnrestricted: \(.unrestricted)\n\nAllowed hosts:\n" +
     (if .unrestricted then "  (all traffic allowed)"
@@ -49,11 +54,11 @@ cmd_status() {
 
   # Get current container's policy from labels
   local policy
-  policy=$(curl -sf "${API}/instances/${INSTANCE}/request-access" 2>/dev/null | jq -r '.' 2>/dev/null) || true
+  policy=$(curl "${AUTH[@]}" -sf "${API}/instances/${INSTANCE}/request-access" 2>/dev/null | jq -r '.' 2>/dev/null) || true
 
   # Get effective access
   local access
-  access=$(curl -sf "${API}/instances/${INSTANCE}/access" 2>/dev/null) || true
+  access=$(curl "${AUTH[@]}" -sf "${API}/instances/${INSTANCE}/access" 2>/dev/null) || true
 
   if [ -n "$access" ]; then
     local current
@@ -130,7 +135,7 @@ cmd_request() {
     '{reason: $reason} + (if $policy != "" then {policy: $policy} else {} end) + (if $hosts != null then {hosts: $hosts} else {} end)')
 
   local result http
-  result=$(curl -s -w '\n%{http_code}' -X POST "${API}/instances/${INSTANCE}/request-access" \
+  result=$(curl "${AUTH[@]}" -s -w '\n%{http_code}' -X POST "${API}/instances/${INSTANCE}/request-access" \
     -H "Content-Type: application/json" \
     -d "$body") || die "Could not reach Claude Manager at ${MANAGER}"
   http=$(echo "$result" | tail -n1)
@@ -153,12 +158,12 @@ cmd_poll() {
   local attempts=0
   while [ $attempts -lt 120 ]; do
     local pending
-    pending=$(curl -sf "${API}/instances/${INSTANCE}/request-access" | jq '[.[] | select(.status == "pending")] | length')
+    pending=$(curl "${AUTH[@]}" -sf "${API}/instances/${INSTANCE}/request-access" | jq '[.[] | select(.status == "pending")] | length')
     if [ "$pending" -eq 0 ]; then
       echo "All requests resolved."
       echo ""
       # Show final status
-      curl -sf "${API}/instances/${INSTANCE}/request-access" | jq -r '.[] | select(.status != "pending") | "  #\(.id) [\(.status)]: \(.requested_policy // (.requested_hosts | join(", ")))"' | tail -3
+      curl "${AUTH[@]}" -sf "${API}/instances/${INSTANCE}/request-access" | jq -r '.[] | select(.status != "pending") | "  #\(.id) [\(.status)]: \(.requested_policy // (.requested_hosts | join(", ")))"' | tail -3
       exit 0
     fi
     sleep 5

@@ -4,6 +4,9 @@ import { fetchSystemInfo, discoverContainers, adoptContainer, uploadFile, fetchW
 import SecurityScanModal from './SecurityScanModal.jsx';
 import InstanceCard from './InstanceCard.jsx';
 import InstanceRow from './InstanceRow.jsx';
+import { byAttention, needsInput } from '../lib/instance-status.js';
+import GraphView from './GraphView.jsx';
+import { useTopology } from '../hooks/useTopology.js';
 import NewInstanceModal from './NewInstanceModal.jsx';
 import TerminalPanel from './Terminal.jsx';
 import ActivityLog from './ActivityLog.jsx';
@@ -114,6 +117,16 @@ export default function Dashboard({ isAdmin, deviceId }) {
   const [adopting, setAdopting] = useState(new Set());
   const [containersExpanded, setContainersExpanded] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('cm-view') || 'list');
+  // Deliberately not the default view: the graph is something you open.
+  const [showGraph, setShowGraph] = useState(false);
+  const { topology, loading: topologyLoading } = useTopology(showGraph);
+
+  useEffect(() => {
+    if (!showGraph) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setShowGraph(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showGraph]);
   const [activityRefresh, setActivityRefresh] = useState(0);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [showDevices, setShowDevices] = useState(false);
@@ -284,6 +297,11 @@ export default function Dashboard({ isAdmin, deviceId }) {
     })),
   ];
 
+  // Instances waiting on a human float to the top; everything else keeps its
+  // order, so the list does not reshuffle on every poll.
+  const orderedContainers = byAttention(allContainers);
+  const waitingCount = allContainers.filter(needsInput).length;
+
   const totalCount = allContainers.length;
 
   return (
@@ -349,6 +367,19 @@ export default function Dashboard({ isAdmin, deviceId }) {
                 <span className="sm:hidden">🛡</span>
               </button>
             )}
+            <button
+              onClick={() => setShowGraph(true)}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 text-gray-200 text-sm font-medium rounded-lg transition-colors"
+              title="Fleet graph — hosts, instances, egress paths and model routes"
+            >
+              <span className="hidden sm:inline">Fleet graph</span>
+              <span className="sm:hidden">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <circle cx="3" cy="8" r="2" /><circle cx="13" cy="4" r="2" /><circle cx="13" cy="12" r="2" />
+                  <path d="M5 7.3l6-2.6M5 8.7l6 2.6" strokeLinecap="round" />
+                </svg>
+              </span>
+            </button>
             {isAdmin && (
               <button
                 onClick={() => setShowDevices(true)}
@@ -450,6 +481,11 @@ export default function Dashboard({ isAdmin, deviceId }) {
                 <span className={`transition-transform ${containersExpanded ? 'rotate-180' : ''}`}>&#9660;</span>
                 <span className="font-medium">
                   Containers ({totalCount})
+                  {waitingCount > 0 && (
+                    <span className="ml-1 font-normal" style={{ color: 'var(--cm-warn)' }}>
+                      &middot; {waitingCount} need{waitingCount === 1 ? 's' : ''} input
+                    </span>
+                  )}
                   {discovered.length > 0 && (
                     <span className="ml-1 text-gray-600 font-normal">
                       &middot; {discovered.length} unmanaged
@@ -478,7 +514,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
             </div>
             {containersExpanded && viewMode === 'list' && (
               <div className="flex flex-col gap-2">
-                {allContainers.map((item) => (
+                {orderedContainers.map((item) => (
                   <InstanceRow
                     key={item._managed ? item.id : item.dockerId}
                     instance={item}
@@ -500,7 +536,7 @@ export default function Dashboard({ isAdmin, deviceId }) {
             )}
             {containersExpanded && viewMode === 'grid' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {allContainers.map((item) => (
+                {orderedContainers.map((item) => (
                   <InstanceCard
                     key={item._managed ? item.id : item.dockerId}
                     instance={item}
@@ -581,6 +617,30 @@ export default function Dashboard({ isAdmin, deviceId }) {
           instanceName={scanModalInstance.name}
           onClose={() => setScanModalInstance(null)}
         />
+      )}
+
+      {/* Fleet graph — a full-surface view you open on purpose, not the default. */}
+      {showGraph && (
+        <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 bg-gray-900">
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-sm font-semibold text-gray-100">Fleet graph</h2>
+              <span className="text-[11px] text-gray-500">
+                drag the background to pan · drag a node to arrange it · scroll to zoom · click for detail
+              </span>
+            </div>
+            <button
+              onClick={() => setShowGraph(false)}
+              className="text-gray-400 hover:text-gray-200 text-sm px-2"
+              title="Close (Esc)"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            <GraphView topology={topology} loading={topologyLoading} />
+          </div>
+        </div>
       )}
 
       {/* Terminal Panel — docked at bottom with tabs */}
