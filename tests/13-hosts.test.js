@@ -273,3 +273,31 @@ describe('recreate and remove happen on the instance\'s own host', () => {
     }
   });
 });
+
+describe('host SSH keys live only in the fleet vault', () => {
+  it('rejects a key reference in the instance-readable Claude vault', async () => {
+    const { assertFleetKeyRef } = await import('../server/hosts.js');
+    assert.throws(() => assertFleetKeyRef('op://Claude/ssh-workstation/credential'), (e) => e.code === 'key_outside_fleet_vault');
+    assert.throws(() => assertFleetKeyRef('ssh-ed25519 AAAA...'), (e) => e.code === 'key_outside_fleet_vault');
+    assert.equal(assertFleetKeyRef('op://Claude-Fleet/ssh-workstation/credential'), 'op://Claude-Fleet/ssh-workstation/credential');
+    // The vault is literally named claude-fleet; 1Password matches case-insensitively, so must we.
+    assert.equal(assertFleetKeyRef('op://claude-fleet/ssh-workstation/credential'), 'op://claude-fleet/ssh-workstation/credential');
+  });
+
+  it('never returns the key reference from the hosts API', () => {
+    const src = readFileSync(new URL('../server/routes/hosts.js', import.meta.url), 'utf8');
+    const start = src.indexOf('function publicHost');
+    const pub = src.slice(start, src.indexOf('\n}\n', start));
+    assert.doesNotMatch(pub, /sshKeyRef:/, 'the reference is a map to the key and must stay server-side');
+    assert.match(pub, /hasKey:/);
+  });
+
+  it('reads host keys with the fleet token, not the instance-wide one', () => {
+    const src = readFileSync(new URL('../server/hosts.js', import.meta.url), 'utf8');
+    const start = src.indexOf('async function readVaultSecret');
+    const body = src.slice(start, src.indexOf('\n}\n', start));
+    assert.match(body, /OP_FLEET_SERVICE_ACCOUNT_TOKEN/);
+    assert.match(body, /OP_SERVICE_ACCOUNT_TOKEN: token/, 'op must be handed the fleet token explicitly');
+    assert.match(body, /assertFleetKeyRef\(ref\)/);
+  });
+});

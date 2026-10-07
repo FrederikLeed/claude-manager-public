@@ -8,7 +8,7 @@
 import {
   getHosts, getHost, upsertHost, deleteHost, getInstancesByHost, DEFAULT_HOST_ID,
 } from '../db.js';
-import { dockerFor, invalidateHost, pingHost } from '../hosts.js';
+import { dockerFor, invalidateHost, pingHost, FLEET_VAULT_PREFIX, isFleetKeyRef } from '../hosts.js';
 import { runOnHost } from '../host-fs.js';
 import { stopHostEventStream, restartHostEventStream } from './instances.js';
 import { logActivity } from '../db.js';
@@ -24,7 +24,7 @@ function publicHost(host, counts = {}) {
     address: host.address,
     sshUser: host.ssh_user,
     sshPort: host.ssh_port,
-    sshKeyRef: host.ssh_key_ref,     // an op:// reference, not a key
+    hasKey: !!host.ssh_key_ref,      // the reference itself is a map to the key; it stays server-side
     dataRoot: host.data_root,
     managerUrl: host.manager_url,
     network: host.network,
@@ -62,10 +62,10 @@ export default async function hostRoutes(fastify) {
     if (getHost(b.id)) return reply.code(409).send({ error: `host ${b.id} already exists` });
     if (b.kind !== 'local') {
       if (!b.address) return reply.code(400).send({ error: 'address is required' });
-      if (!b.sshKeyRef?.startsWith('op://')) {
+      if (!isFleetKeyRef(b.sshKeyRef)) {
         // Keys live in the vault. Accepting inline key material here would put it
         // in the request log, the DB and every backup of it.
-        return reply.code(400).send({ error: 'sshKeyRef must be an op:// reference' });
+        return reply.code(400).send({ error: `sshKeyRef must be an ${FLEET_VAULT_PREFIX} reference`, code: 'key_outside_fleet_vault' });
       }
     }
 
@@ -95,8 +95,8 @@ export default async function hostRoutes(fastify) {
     const existing = getHost(request.params.id);
     if (!existing) return reply.code(404).send({ error: 'Host not found' });
     const b = request.body || {};
-    if (b.sshKeyRef && !b.sshKeyRef.startsWith('op://')) {
-      return reply.code(400).send({ error: 'sshKeyRef must be an op:// reference' });
+    if (b.sshKeyRef && !isFleetKeyRef(b.sshKeyRef)) {
+      return reply.code(400).send({ error: `sshKeyRef must be an ${FLEET_VAULT_PREFIX} reference`, code: 'key_outside_fleet_vault' });
     }
     const host = upsertHost({
       id: existing.id,

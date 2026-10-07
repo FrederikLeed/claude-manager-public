@@ -56,6 +56,9 @@ services:
       - LITELLM_DEFAULT_BUDGET=${LITELLM_DEFAULT_BUDGET:-20}
       # 1Password service account (read-only, vault-scoped) injected into instances
       - OP_SERVICE_ACCOUNT_TOKEN=${OP_SERVICE_ACCOUNT_TOKEN:-}
+      # Manager-only. Never forwarded to instances (managedSecretEnv passes the
+      # instance-wide token only); this one reads host SSH keys from claude-fleet.
+      - OP_FLEET_SERVICE_ACCOUNT_TOKEN=${OP_FLEET_SERVICE_ACCOUNT_TOKEN:-}
     networks:
       - claude-manager-net
 

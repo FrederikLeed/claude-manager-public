@@ -64,6 +64,10 @@ export const config = Object.freeze({
   // 1Password service account token injected into every instance (read-only,
   // vault-scoped). Empty = 1Password not configured.
   OP_SERVICE_ACCOUNT_TOKEN: process.env.OP_SERVICE_ACCOUNT_TOKEN || '',
+  // Reads host SSH keys from the Claude-Fleet vault. Deliberately a different
+  // token from the one injected into instances: the instance-wide token must
+  // never be able to reach a host key.
+  OP_FLEET_SERVICE_ACCOUNT_TOKEN: process.env.OP_FLEET_SERVICE_ACCOUNT_TOKEN || '',
   // LiteLLM proxy
   LITELLM_API_BASE: process.env.LITELLM_API_BASE || '',
   LITELLM_MASTER_KEY: process.env.LITELLM_MASTER_KEY || '',

@@ -25,12 +25,41 @@ const clients = new Map();   // hostId -> { docker, signature }
 const keyCache = new Map();  // op:// reference -> key material
 
 /** Read a secret from the 1Password Claude vault. Never logged. */
-async function readVaultSecret(ref) {
-  if (keyCache.has(ref)) return keyCache.get(ref);
-  if (!process.env.OP_SERVICE_ACCOUNT_TOKEN) {
-    throw new Error('OP_SERVICE_ACCOUNT_TOKEN is not set; cannot read host SSH key');
+export const FLEET_VAULT_PREFIX = 'op://Claude-Fleet/';
+
+/**
+ * A host key reference must live in the Claude-Fleet vault. The Claude vault is
+ * readable by every instance through the token they are all injected with, so
+ * a key there is root on that host from any instance shell — verified live.
+ */
+export function isFleetKeyRef(ref) {
+  // 1Password resolves vault names case-insensitively (the vault is literally
+  // "claude-fleet"), so the guard must too, or a correct lowercase reference
+  // is refused while an uppercase one is accepted.
+  return typeof ref === 'string' && ref.toLowerCase().startsWith(FLEET_VAULT_PREFIX.toLowerCase());
+}
+
+export function assertFleetKeyRef(ref) {
+  if (!isFleetKeyRef(ref)) {
+    const err = new Error(`host SSH key must be an ${FLEET_VAULT_PREFIX} reference; the Claude vault is readable by every instance`);
+    err.statusCode = 400; err.code = 'key_outside_fleet_vault';
+    throw err;
   }
-  const { stdout } = await execFileAsync('op', ['read', ref], { maxBuffer: 1 << 20 });
+  return ref;
+}
+
+async function readVaultSecret(ref) {
+  assertFleetKeyRef(ref);
+  if (keyCache.has(ref)) return keyCache.get(ref);
+  const token = config.OP_FLEET_SERVICE_ACCOUNT_TOKEN;
+  if (!token) {
+    throw new Error('OP_FLEET_SERVICE_ACCOUNT_TOKEN is not set; host SSH keys are read from the Claude-Fleet vault with the manager-only token');
+  }
+  // op gets the FLEET token, scoped to that vault, never the instance-wide one.
+  const { stdout } = await execFileAsync('op', ['read', ref], {
+    maxBuffer: 1 << 20,
+    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
+  });
   const secret = stdout.replace(/\n$/, '') + '\n'; // keep exactly one trailing newline
   keyCache.set(ref, secret);
   return secret;
