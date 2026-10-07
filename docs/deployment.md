@@ -188,6 +188,7 @@ On first start the manager:
 | `LITELLM_API_BASE` | `http://cm-litellm:4000` | LiteLLM admin + completion endpoint |
 | `LITELLM_MASTER_KEY` | *(unset)* | LiteLLM admin key — **required** for `local-llm` / `foundry*` |
 | `LITELLM_DEFAULT_BUDGET` | `20` | Per-instance USD budget on virtual keys |
+| `LITELLM_BIND` / `LITELLM_DB_BIND` | `127.0.0.1` | Interface the LiteLLM proxy (:4000) and its Postgres (:5432) are published on. Set to `0.0.0.0` only on a host whose DOCKER-USER rules (`scripts/host-harden.sh`) scope the port to the monitoring host; see operations §11 |
 | `AZURE_AI_API_KEY` | *(unset)* | LiteLLM-side: Azure key for `foundry` (`gpt-4.1-mini-1`) |
 | `GPTLATEST_AZURE_AI_API_KEY` | *(unset)* | LiteLLM-side: Azure key for `foundry-latest` |
 | `DATA_DIR` | `/data` | SQLite DB path inside the manager container |

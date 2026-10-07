@@ -442,6 +442,46 @@ docker compose -f docker-compose.yml logs cm-litellm --tail 50
 docker compose -f docker-compose.yml logs cm-ollama --tail 50
 ```
 
+### Fleet dashboards on the monitoring host
+
+The monitoring host (host-b: Prometheus, Grafana, blackbox) watches every
+fleet host the same way. The files it needs live under
+`scripts/host-monitoring/`; each says where it goes.
+
+| Dashboard (Grafana folder) | Source | What it reads |
+|---|---|---|
+| `host/host-a`, `host/workstation` | `grafana/*.json`, scraped per `*.scrape.yml` | node-exporter + cadvisor on that host; the workstation one has no temperature/SMART panels because Docker Desktop's exporters see the WSL2 VM, not Windows (`scripts/workstation-exporters.sh` starts them there) |
+| `llm/litellm` | `grafana/litellm.json` + `grafana/litellm-datasource.yml` | LiteLLM's Postgres spend log on host-a (requests, tokens, latency p50/p95, spend, by model / backend / key alias) and blackbox probes of every backend (`llm-backends.scrape.yml`, module `blackbox-http_up.yml`) |
+
+The spend log is read with a dedicated read-only role, `grafana_ro` (SELECT on
+the LiteLLM tables, connection limit 6; password in 1Password as
+`litellm-grafana-readonly`). host-a publishes 5432 only because its `.env`
+sets `LITELLM_DB_BIND=0.0.0.0`, and the DOCKER-USER rules from
+`scripts/host-harden.sh` admit the monitoring host alone -- the same scope as
+LiteLLM's own :4000. Grafana gets the password as `LITELLM_RO_PASSWORD` from the
+monitoring stack's `.env`, like its other SQL datasources.
+
+Things the LiteLLM dashboard is honest about:
+
+- **Spend reads 0** until model prices are configured in LiteLLM for the
+  deployment names; local models cost nothing anyway. Tokens are the measure.
+- **A backend tile is green when anything answers** (401 without a key still
+  counts). Red means DNS or TCP failed from the monitoring host -- today that
+  is the lab GPU box when it is off, and Azure Foundry while its resource name
+  does not resolve.
+- `requests` includes LiteLLM's own health probes of the backends, shown as
+  `(health/unknown)` so they do not pass for real usage.
+
+To re-create the role after a database reset:
+
+```sql
+CREATE ROLE grafana_ro LOGIN PASSWORD '<from 1Password>' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT CONNECTION LIMIT 6;
+GRANT CONNECT ON DATABASE litellm TO grafana_ro;
+GRANT USAGE ON SCHEMA public TO grafana_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE litellm IN SCHEMA public GRANT SELECT ON TABLES TO grafana_ro;
+```
+
 ---
 
 ## 12. Data persistence

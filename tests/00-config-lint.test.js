@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -193,5 +193,53 @@ describe('Compose / deploy config', () => {
       'manager must bind ./workspace:/workspace-src so it can rebuild claude-workspace'
     );
     assert.ok(/WORKSPACE_SRC_DIR=\/workspace-src/.test(base), 'manager must set WORKSPACE_SRC_DIR=/workspace-src');
+  });
+});
+
+describe('Host-monitoring drop-ins', () => {
+  // These files are copied by hand onto the monitoring host, so nothing runs
+  // them here. Prometheus parses each scrape.d file as a document with a
+  // scrape_configs key -- a bare list is rejected and the whole reload fails,
+  // which took one round trip to learn.
+  const dir = path.join(__dirname, '..', 'scripts', 'host-monitoring');
+  const scrapeFiles = readdirSync(dir).filter((f) => f.endsWith('.scrape.yml'));
+
+  it('ships at least the host-a, workstation and llm-backends scrape files', () => {
+    for (const want of ['host-a.scrape.yml', 'workstation.scrape.yml', 'llm-backends.scrape.yml']) {
+      assert.ok(scrapeFiles.includes(want), `${want} missing`);
+    }
+  });
+
+  it('every scrape file is a scrape_configs document with unique, host-prefixed job names', () => {
+    const seen = new Map();
+    for (const f of scrapeFiles) {
+      const text = readFileSync(path.join(dir, f), 'utf8');
+      assert.match(text, /^scrape_configs:\s*$/m, `${f}: top-level scrape_configs key`);
+      assert.match(text, /^# Drop into host-b: /m, `${f}: says where it goes`);
+      const jobs = [...text.matchAll(/^\s*- job_name:\s*(\S+)/gm)].map((m) => m[1]);
+      assert.ok(jobs.length > 0, `${f}: declares a job`);
+      const prefix = f.replace('.scrape.yml', '');
+      for (const j of jobs) {
+        assert.ok(j.startsWith(prefix), `${f}: job ${j} should be prefixed ${prefix}- (the base node/cadvisor jobs belong to the monitoring host)`);
+        assert.ok(!seen.has(j), `job ${j} declared in both ${seen.get(j)} and ${f}`);
+        seen.set(j, f);
+      }
+    }
+  });
+
+  it('dashboards are valid JSON with a stable uid and no leftover host name', () => {
+    const gdir = path.join(dir, 'grafana');
+    for (const f of readdirSync(gdir).filter((x) => x.endsWith('.json'))) {
+      const d = JSON.parse(readFileSync(path.join(gdir, f), 'utf8'));
+      assert.equal(typeof d.uid, 'string', `${f}: uid`);
+      assert.equal(d.uid, f.replace('.json', ''), `${f}: file name is the uid`);
+      assert.ok(Array.isArray(d.panels) && d.panels.length > 0, `${f}: panels`);
+      if (f === 'workstation.json') assert.ok(!JSON.stringify(d).includes('host-a'), 'workstation.json copied from host-a still mentions it');
+    }
+  });
+
+  it('the LiteLLM datasource never carries a literal password', () => {
+    const text = readFileSync(path.join(dir, 'grafana', 'litellm-datasource.yml'), 'utf8');
+    assert.match(text, /password:\s*\$LITELLM_RO_PASSWORD\s*$/m);
   });
 });

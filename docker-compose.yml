@@ -116,6 +116,11 @@ services:
   cm-litellm-db:
     logging: *default-logging
     image: postgres:16-alpine
+    # Not published by default. A host whose Grafana reads the spend log sets
+    # LITELLM_DB_BIND=0.0.0.0 in its .env and scopes the source with the DOCKER-USER
+    # rule (scripts/host-harden.sh); the datasource uses the read-only grafana_ro role.
+    ports:
+      - "${LITELLM_DB_BIND:-127.0.0.1}:5432:5432"
     container_name: cm-litellm-db
     restart: unless-stopped
     volumes:

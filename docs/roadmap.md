@@ -99,6 +99,12 @@ per-instance token; widening an allowlist requires an admin device.
   disconnect, the session is detached (not killed), preserving work in
   progress.
 
+- [x] **Fleet and LLM dashboards on the monitoring host** (October 2026) --
+  per-host Grafana dashboards for host-a and the Docker Desktop workstation
+  (node-exporter + cadvisor), and a LiteLLM dashboard fed by a read-only role
+  on the spend-log database plus blackbox probes of every backend. Drop-in
+  files under `scripts/host-monitoring/`.
+
 ### Remaining
 
 - [ ] **Live resource metrics (CPU/memory sparklines)**

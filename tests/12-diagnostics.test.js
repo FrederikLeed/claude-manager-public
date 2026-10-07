@@ -350,7 +350,8 @@ describe('review fixes (2026-06-10 review, fixed 2026-09-16)', async () => {
     const compose = read('docker-compose.yml');
     assert.match(compose, /"\$\{LITELLM_BIND:-127\.0\.0\.1\}:4000:4000"/, 'LiteLLM must default to loopback');
     assert.match(compose, /"127\.0\.0\.1:11434:11434"/);
-    assert.doesNotMatch(compose, /^\s*- "(0\.0\.0\.0:)?(4000|11434):/m, 'no unconditional LAN publish of an LLM port');
+    assert.match(compose, /"\$\{LITELLM_DB_BIND:-127\.0\.0\.1\}:5432:5432"/, 'the spend-log DB defaults to loopback as well');
+    assert.doesNotMatch(compose, /^\s*- "(0\.0\.0\.0:)?(4000|5432|11434):/m, 'no unconditional LAN publish of an LLM port');
   });
 
   // T3: a fixed test token became a standing admin credential.
