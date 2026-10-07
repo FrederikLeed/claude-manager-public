@@ -29,6 +29,7 @@ import {
   setInstanceClaudeVersion,
   deleteInstanceScan,
   getHosts,
+  getHost,
 } from '../db.js';
 import { WS_EVENTS, NETWORK_POLICIES, INSTANCE_EVENTS } from '../../shared/constants.js';
 import { hashToken } from '../auth.js';
@@ -314,11 +315,18 @@ export default async function instanceRoutes(fastify) {
         },
       },
     },
-  }, async (request) => {
+  }, async (request, reply) => {
     const { id } = request.params;
     const { dockerSocket, networkPolicy } = request.body;
     const dbData = getInstance(id);
-    const result = await recreateInstance(id, { dockerSocket, networkPolicy });
+    let result;
+    try {
+      result = await recreateInstance(id, { dockerSocket, networkPolicy });
+    } catch (err) {
+      // A placement refusal is a decision, not a failure: hand the code back.
+      if (err.statusCode && err.code) return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      throw err;
+    }
 
     // Update SQLite with new docker ID if it changed
     if (dbData && result.dockerId !== dbData.docker_id) {
@@ -353,7 +361,7 @@ export default async function instanceRoutes(fastify) {
       result = await recreateInstance(id, { updateImage: true });
     } catch (err) {
       reply.code(err.statusCode || 500);
-      return { error: err.message };
+      return err.code ? { error: err.message, code: err.code } : { error: err.message };
     }
 
     if (dbData && result.dockerId !== dbData.docker_id) {
@@ -521,11 +529,27 @@ function scheduleAclResync(log) {
   }, 1500);
 }
 
+const CONNECTING = Symbol('connecting');
+const streamBackoff = new Map();   // hostId -> ms until the next attempt is allowed
+
 async function startHostEventStream(log, hostId) {
+  // The sentinel is the fix for duplicate events. Without it the map was empty
+  // for the whole of the await below — up to 20s for a dead SSH host — so the
+  // retry and the reconcile both started attempts, each one set the map on
+  // success, the last won, and the orphans kept broadcasting: every container
+  // event delivered N times.
   if (eventStreams.has(hostId)) return;
+  if (!getHost(hostId)?.enabled) return;
+  eventStreams.set(hostId, CONNECTING);
   try {
     const stream = await getEventStream(hostId);
+    if (eventStreams.get(hostId) !== CONNECTING) {
+      // Something else won the race after all; this one is surplus.
+      try { stream.destroy(); } catch { /* ignore */ }
+      return;
+    }
     eventStreams.set(hostId, stream);
+    streamBackoff.delete(hostId);
     log.info({ hostId }, 'Docker event stream connected');
 
     let pending = '';
@@ -574,42 +598,76 @@ async function startHostEventStream(log, hostId) {
 
     // 'error' and 'end' both fire on a dropped stream; the identity check keeps
     // that from starting two reconnect chains for the same host.
-    const retry = (why) => {
+    // 'error' and 'end' both fire on a dropped stream; the identity check keeps
+    // that from tearing down a replacement. Reconnection is NOT scheduled here
+    // — the reconcile is the only scheduler, so there is exactly one attempt
+    // chain per host, with back-off.
+    const dropped = (why) => {
       if (eventStreams.get(hostId) !== stream) return;
       eventStreams.delete(hostId);
       try { stream.destroy(); } catch { /* already gone */ }
-      log.warn({ hostId }, `Docker event stream ${why}, reconnecting...`);
-      setTimeout(() => startHostEventStream(log, hostId), 3000);
+      log.warn({ hostId }, `Docker event stream ${why}; the reconcile will reconnect`);
     };
-
-    stream.on('error', (err) => { log.error({ err, hostId }, 'Docker event stream error'); retry('errored'); });
-    stream.on('end', () => retry('ended'));
+    stream.on('error', (err) => { log.error({ err, hostId }, 'Docker event stream error'); dropped('errored'); });
+    stream.on('end', () => dropped('ended'));
   } catch (err) {
-    eventStreams.delete(hostId);
-    log.error({ err, hostId }, 'Failed to start Docker event stream, retrying...');
-    setTimeout(() => startHostEventStream(log, hostId), 5000);
+    if (eventStreams.get(hostId) === CONNECTING) eventStreams.delete(hostId);
+    const prev = streamBackoff.get(hostId) || 0;
+    const next = Math.min(60_000, Math.max(5_000, prev * 2));
+    streamBackoff.set(hostId, next);
+    // Log on first failure and when the back-off grows, not every attempt.
+    if (next !== prev) log.error({ err: err.message, hostId, retryInMs: next }, 'Failed to start Docker event stream');
   }
+}
+
+/** Tear down one host's stream — a disabled, deleted or re-addressed host. */
+export function stopHostEventStream(hostId) {
+  const s = eventStreams.get(hostId);
+  eventStreams.delete(hostId);
+  streamBackoff.delete(hostId);
+  if (s && s !== CONNECTING) { try { s.destroy(); } catch { /* ignore */ } }
+}
+
+/** After a PATCH that may have changed address/port/key: drop and let the reconcile reconnect. */
+export function restartHostEventStream(hostId) {
+  stopHostEventStream(hostId);
+  lastAttempt.delete(hostId);
 }
 
 /**
  * Watch every enabled host, and keep watching: hosts can be registered at
  * runtime, and a host that was unreachable at boot must not stay unwatched.
  */
+const lastAttempt = new Map();     // hostId -> timestamp of the last connect attempt
+
 function startEventStream(log) {
+  // The one scheduler. Runs every 5s but a host is only retried once its
+  // back-off has elapsed, so a dead host costs one attempt per minute at most,
+  // a live host reconnects within seconds, and a host registered or re-enabled
+  // at runtime is picked up without a restart. Streams for hosts that are no
+  // longer enabled are torn down here too.
   const reconcile = () => {
     let hosts;
-    try { hosts = getHosts({ enabledOnly: true }); } catch { return; }
-    for (const h of hosts) startHostEventStream(log, h.id);
+    try { hosts = getHosts(); } catch { return; }
+    const now = Date.now();
+    for (const h of hosts) {
+      if (!h.enabled) { if (eventStreams.has(h.id)) stopHostEventStream(h.id); continue; }
+      if (eventStreams.has(h.id)) continue;
+      const wait = streamBackoff.get(h.id) || 0;
+      if (now - (lastAttempt.get(h.id) || 0) < wait) continue;
+      lastAttempt.set(h.id, now);
+      startHostEventStream(log, h.id);
+    }
+    for (const id of [...eventStreams.keys()]) {
+      if (!hosts.some((h) => h.id === id)) stopHostEventStream(id);
+    }
   };
   reconcile();
-  streamReconcile = setInterval(reconcile, 60_000);
+  streamReconcile = setInterval(reconcile, 5_000);
   streamReconcile.unref?.();
 }
 
 export function stopEventStream() {
   if (streamReconcile) { clearInterval(streamReconcile); streamReconcile = null; }
-  for (const [hostId, stream] of eventStreams) {
-    try { stream.destroy(); } catch { /* already gone */ }
-    eventStreams.delete(hostId);
-  }
+  for (const hostId of [...eventStreams.keys()]) stopHostEventStream(hostId);
 }

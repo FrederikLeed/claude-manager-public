@@ -14,13 +14,18 @@ import { moduleLogger } from './logger.js';
 
 const log = moduleLogger('metrics');
 
-const TTL_MS = 10_000;
+// Above the UI's 10s poll on purpose: equal to it, every other poll arrived
+// just as the cache expired and paid the full cold build (~5s on two hosts).
+const TTL_MS = 20_000;
+// A scrape that failed is remembered for longer. The workstation has no
+// node-exporter, and re-probing it cost a 2.5s timeout on every cold build.
+const FAIL_TTL_MS = 60_000;
 const SCRAPE_TIMEOUT_MS = 2_500;
 const cache = new Map();
 
 async function cached(key, fn) {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (hit && Date.now() - hit.at < (hit.value === null ? FAIL_TTL_MS : TTL_MS)) return hit.value;
   const value = await fn().catch((err) => {
     log.debug({ key, err: err.message }, 'metric collection failed');
     return null;

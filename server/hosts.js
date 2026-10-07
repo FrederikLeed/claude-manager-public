@@ -62,7 +62,16 @@ async function sshClient(host) {
     host: host.address,
     port: host.ssh_port || 22,
     username: host.ssh_user || 'claude',
-    sshOptions: { privateKey: await readVaultSecret(host.ssh_key_ref) },
+    sshOptions: {
+      privateKey: await readVaultSecret(host.ssh_key_ref),
+      // Without a keepalive, a host that dies without FIN/RST (power loss, IP
+      // change) leaves the event stream hung forever and the reconcile skips
+      // it because the map entry exists. 3 missed probes at 15s = ~45s to notice.
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 3,
+      // A dead host must fail fast, not hold a request open for the default 20s.
+      readyTimeout: 10_000,
+    },
   });
 }
 

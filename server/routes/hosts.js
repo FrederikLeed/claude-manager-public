@@ -10,6 +10,7 @@ import {
 } from '../db.js';
 import { dockerFor, invalidateHost, pingHost } from '../hosts.js';
 import { runOnHost } from '../host-fs.js';
+import { stopHostEventStream, restartHostEventStream } from './instances.js';
 import { logActivity } from '../db.js';
 
 const HOST_ID = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -114,6 +115,7 @@ export default async function hostRoutes(fastify) {
       labels: b.labels ?? existing.labels,
     });
     invalidateHost(host.id);   // connection details may have changed
+    restartHostEventStream(host.id);   // and so may the stream's endpoint
     return { host: publicHost(getHost(host.id)) };
   });
 
@@ -128,6 +130,7 @@ export default async function hostRoutes(fastify) {
       return reply.code(409).send({ error: err.message });
     }
     invalidateHost(request.params.id);
+    stopHostEventStream(request.params.id);
     logActivity('host_removed', null, request.params.id);
     return { ok: true };
   });

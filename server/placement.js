@@ -19,7 +19,7 @@ function refuse(status, code, message) {
  * Resolve and validate the target host for a new instance.
  * Returns the host row; throws a typed error the route can pass straight through.
  */
-export async function admit({ hostId, dockerSocket = false, networkPolicy = 'unrestricted' } = {}) {
+export async function admit({ hostId, dockerSocket = false, networkPolicy = 'unrestricted', existing = false } = {}) {
   const id = hostId || DEFAULT_HOST_ID;
   const host = getHost(id);
 
@@ -54,8 +54,10 @@ export async function admit({ hostId, dockerSocket = false, networkPolicy = 'unr
     );
   }
 
+  // A recreate re-admits an instance that is already counted; only a brand new
+  // instance can push a host over its cap.
   const count = getInstancesByHost(id).length;
-  if (count >= config.MAX_INSTANCES) {
+  if (!existing && count >= config.MAX_INSTANCES) {
     throw refuse(409, 'host_full', `Host ${host.name} is at the instance limit (${config.MAX_INSTANCES})`);
   }
 

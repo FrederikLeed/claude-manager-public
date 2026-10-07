@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { chownSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { config } from './config.js';
-import { getAllInstances, getInstance, getHosts, DEFAULT_HOST_ID } from './db.js';
+import { getAllInstances, getInstance, getHosts, getHost, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 import { moduleLogger } from './logger.js';
 
@@ -562,6 +562,10 @@ export async function stopInstance(id, timeoutSeconds = 10) {
  * Remove a container and optionally its workspace volume.
  */
 export async function removeInstance(id, { removeVolume = false } = {}) {
+  // Resolved before anything is removed: the volume lives on the instance's
+  // host, and deleting it through the local client leaked every remote volume
+  // while the activity log said "Volume removed".
+  const client = await dockerForInstance(id);
   const container = await resolveContainer(id);
 
   // Resolve the workspace volume name from the container's own mounts BEFORE
@@ -593,7 +597,7 @@ export async function removeInstance(id, { removeVolume = false } = {}) {
 
   if (removeVolume && volumeName) {
     try {
-      const volume = docker.getVolume(volumeName);
+      const volume = client.getVolume(volumeName);
       await volume.remove();
     } catch (err) {
       // Volume may not exist, that's fine
@@ -793,6 +797,12 @@ export async function adoptContainer(dockerId, { name }) {
  * Returns the new container info.
  */
 export async function recreateInstance(id, { dockerSocket, networkPolicy, updateImage = false } = {}) {
+  // The replacement must be built on the host the instance lives on. This used
+  // the module-level local client, so recreating a remote instance built the
+  // new container on the manager's daemon, force-removed the remote original,
+  // and left the DB row pointing at a host where it no longer existed.
+  const client = await dockerForInstance(id);
+  const host = getHost(getInstance(id)?.host_id || DEFAULT_HOST_ID);
   const container = await resolveContainer(id);
   const inspect = await container.inspect();
 
@@ -806,12 +816,17 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   // The workspace volume and all other binds are preserved, so data is retained.
   const newImage = updateImage ? config.CLAUDE_IMAGE : oldConfig.Image;
   if (updateImage && newImage !== oldConfig.Image) {
-    await ensureImage(newImage);
+    await ensureImage(newImage, client);
   }
 
   // Resolve current values — use new if provided, else keep old
   const newDockerSocket = dockerSocket ?? hasDockerSocket(inspect.Mounts);
   const newNetworkPolicy = networkPolicy ?? (oldLabels[LABELS.NETWORK_POLICY] || 'unrestricted');
+
+  // Same gate as create. Toggling the socket or policy on an existing instance
+  // bypassed admit() entirely, so a restricted policy could land on a remote
+  // host, and the socket could be granted on the manager's own.
+  await admit({ hostId: host?.id || DEFAULT_HOST_ID, dockerSocket: newDockerSocket, networkPolicy: newNetworkPolicy, existing: true });
 
   // Build new bind list: keep existing binds, remove docker socket
   const existingBinds = (oldHostConfig.Binds || []).filter(
@@ -838,7 +853,7 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     && !MANAGED_SECRET_PREFIXES.some(p => e.startsWith(p))
     && !identityPrefixes.some(p => e.startsWith(p)));
   newEnv.push(
-    `CM_INSTANCE_ID=${instanceId}`, `CM_MANAGER_URL=${MANAGER_URL}`,
+    `CM_INSTANCE_ID=${instanceId}`, `CM_MANAGER_URL=${managerUrlFor(host, MANAGER_URL)}`,
     `CM_NETWORK_POLICY=${newNetworkPolicy}`, ...managedSecretEnv(),
   );
   if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
@@ -884,7 +899,7 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
 
   let newContainer = null;
   try {
-    newContainer = await docker.createContainer({
+    newContainer = await client.createContainer({
       name: oldName,
       Hostname: instanceHostname(oldName, oldLabels[LABELS.ID] || id),
       Image: newImage,

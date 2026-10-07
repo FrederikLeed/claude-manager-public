@@ -433,10 +433,19 @@ export default function GraphView({ topology, loading }) {
     dragRef.current = moved > 6 ? { moved } : null;
     setTimeout(() => { dragRef.current = null; }, 0);
   };
-  const onWheel = (e) => {
-    e.preventDefault();
-    setView((v) => ({ ...v, k: Math.min(2.5, Math.max(0.4, v.k * (e.deltaY < 0 ? 1.1 : 0.9))) }));
-  };
+  // React 19 registers onWheel as a passive listener, so preventDefault() is
+  // ignored and the dashboard scrolls behind the graph on every zoom. A native
+  // listener with passive:false is the only way to actually claim the wheel.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const onWheel = (e) => {
+      e.preventDefault();
+      setView((v) => ({ ...v, k: Math.min(2.5, Math.max(0.4, v.k * (e.deltaY < 0 ? 1.1 : 0.9))) }));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
   /** Pointer position in graph coordinates, undoing pan and zoom. */
   const toGraph = (e) => {
     const r = wrapRef.current.getBoundingClientRect();
@@ -476,12 +485,6 @@ export default function GraphView({ topology, loading }) {
     style: { cursor: 'grab' },
   });
 
-  // A drag that moved more than a few pixels is a pan, not a click.
-  const clickable = (node) => (e) => {
-    if ((dragRef.current?.moved || 0) > 6) return;
-    e.stopPropagation();
-    setSelected(node);
-  };
 
   if (loading && !topology) {
     return <div className="p-8 text-sm text-gray-500">Mapping the fleet…</div>;
@@ -525,8 +528,12 @@ export default function GraphView({ topology, loading }) {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
-          onWheel={onWheel}
-          onClick={() => setSelected(null)}
+          onClick={() => {
+            // A drag that moved more than a few pixels is a pan, not a click:
+            // it must not throw away the selection the user is looking at.
+            if ((dragRef.current?.moved || 0) > 6) return;
+            setSelected(null);
+          }}
         >
           <div
             className="absolute origin-top-left"

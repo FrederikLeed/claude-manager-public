@@ -12,7 +12,7 @@ let _cookie = null;
  * Make an authenticated API request.
  */
 export async function api(path, options = {}) {
-  const { method = 'GET', body, query, cookie } = options;
+  const { method = 'GET', body, query, cookie, headers: extraHeaders } = options;
   let url = `${API_BASE}${path}`;
   if (query) {
     const params = new URLSearchParams(query);
@@ -27,6 +27,7 @@ export async function api(path, options = {}) {
     headers['Cookie'] = cookie || _cookie;
   }
 
+  Object.assign(headers, extraHeaders || {});
   const fetchOptions = { method, headers };
   if (body) fetchOptions.body = JSON.stringify(body);
 

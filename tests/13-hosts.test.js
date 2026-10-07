@@ -216,3 +216,60 @@ describe('client cache signature', () => {
     assert.match(sig[1], /ssh_port/, 'ssh_port must be part of the cache key');
   });
 });
+
+describe('recreate and remove happen on the instance\'s own host', () => {
+  // These pin a bug class, in the same way 14-topology pins the status
+  // vocabulary: resolveContainer was made host-aware, but recreateInstance kept
+  // building the replacement with the module-level LOCAL client and
+  // removeInstance deleted the volume through it. A remote instance that was
+  // recreated ended up on the manager's daemon with its row still pointing at
+  // the remote host; a removed one leaked its volume.
+  const src = readFileSync(new URL('../server/docker.js', import.meta.url), 'utf8');
+  const body = (name) => {
+    const i = src.indexOf(`export async function ${name}(`);
+    assert.ok(i >= 0, `${name} should exist`);
+    const j = src.indexOf('\n}\n', i);
+    return src.slice(i, j);
+  };
+
+  it('recreateInstance resolves the instance host client and creates on it', () => {
+    const b = body('recreateInstance');
+    assert.match(b, /await dockerForInstance\(id\)/, 'must resolve the client for this instance');
+    assert.match(b, /client\.createContainer\(/, 'the replacement must be created on that client');
+    assert.doesNotMatch(b, /\bdocker\.createContainer\(/, 'must not create on the module-level local client');
+    assert.match(b, /ensureImage\(newImage, client\)/, 'the image must be ensured on that host');
+    assert.match(b, /managerUrlFor\(host, MANAGER_URL\)/, 'the callback URL must be the one this host can reach');
+  });
+
+  it('recreateInstance passes through the same placement gate as create', () => {
+    assert.match(body('recreateInstance'), /await admit\(\{[^}]*existing: true/, 'recreate must re-admit, flagged as an existing instance');
+  });
+
+  it('removeInstance deletes the volume through the instance host client', () => {
+    const b = body('removeInstance');
+    assert.match(b, /await dockerForInstance\(id\)/);
+    assert.match(b, /client\.getVolume\(/);
+    assert.doesNotMatch(b, /\bdocker\.getVolume\(/, 'a remote volume deleted via the local client is silently leaked');
+  });
+
+  it('admit() lets an existing instance re-admit on a full host, but not a new one', async () => {
+    const { admit } = await import('../server/placement.js');
+    const { config } = await import('../server/config.js');
+    // config is frozen, so fill the host to its cap with rows instead.
+    const have = db.getInstancesByHost(db.DEFAULT_HOST_ID).length;
+    const filler = [];
+    for (let n = have; n < config.MAX_INSTANCES; n++) {
+      const id = `cap-${n.toString().padStart(4, '0')}`;
+      db.upsertInstance({ id, dockerId: `d-${id}`, name: id, image: 'x', hostId: db.DEFAULT_HOST_ID });
+      filler.push(id);
+    }
+    try {
+      assert.equal(db.getInstancesByHost(db.DEFAULT_HOST_ID).length, config.MAX_INSTANCES, 'precondition: host is exactly full');
+      await assert.rejects(() => admit({ hostId: db.DEFAULT_HOST_ID }), (e) => e.code === 'host_full', 'a new instance must be refused at the cap');
+      const host = await admit({ hostId: db.DEFAULT_HOST_ID, existing: true });
+      assert.equal(host.id, db.DEFAULT_HOST_ID, 'an existing instance already counts and must be allowed through');
+    } finally {
+      for (const id of filler) db.deleteInstance(id);
+    }
+  });
+});

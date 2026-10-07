@@ -22,7 +22,9 @@ export default function GraphDetail({ node, topology, onClose }) {
   const d = node.detail || {};
   // Same derivation the dashboard uses, so the two views cannot disagree about
   // which instances are waiting on a human.
-  const status = node.type === 'instance'
+  // Same gate the chip uses (topology reports a running container as 'ok'):
+  // a stopped instance is not "working", whatever its last event said.
+  const status = node.type === 'instance' && node.status === 'ok'
     ? statusFromUsage({ lastEvent: d.lastEvent, statusMessage: d.statusMessage, updatedAt: d.usageUpdatedAt })
     : null;
   const split = contextSplit({ split: d.contextSplit });

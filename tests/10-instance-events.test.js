@@ -12,11 +12,16 @@ import {
 
 describe('Instance events + usage', () => {
   let instanceId;
+  let asInstance;   // the headers a real in-container hook would send
 
   before(async () => {
     await authenticate();
     const { instance } = await createTestInstance('test-events');
     instanceId = instance.id;
+    // The create response is the one place the raw token is ever returned.
+    // Callbacks are bound to the calling instance now, so a request with no
+    // token and a non-instance source IP is refused — which is the point.
+    asInstance = { Authorization: `Bearer ${instance.eventToken}` };
     await waitForState(instanceId, 'running', 30000);
   });
 
@@ -26,10 +31,21 @@ describe('Instance events + usage', () => {
     }
   });
 
-  it('accepts a usage event and is reachable without device auth', async () => {
-    // No cookie sent — endpoint must be auth-exempt (called from inside containers)
+  it('refuses a callback that carries no instance token', async () => {
     const res = await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      cookie: 'none=none',
+      body: { event: 'Stop', contextTokens: 1 },
+    });
+    assert.equal(res.status, 403, 'a bare request from a non-instance IP must not be able to speak as the instance');
+  });
+
+  it('accepts a usage event from the instance itself without device auth', async () => {
+    // No cookie — the hook runs inside the container and proves itself with
+    // the per-instance token instead.
+    const res = await api(`/api/instances/${instanceId}/event`, {
+      method: 'POST',
+      headers: asInstance,
       cookie: 'none=none',
       body: { event: 'Stop', contextTokens: 54200, outputTokens: 640, model: 'claude-opus-4-8' },
     });
@@ -51,6 +67,7 @@ describe('Instance events + usage', () => {
     try {
       await api(`/api/instances/${instanceId}/event`, {
         method: 'POST',
+      headers: asInstance,
         body: { event: 'Notification', message: 'needs attention', contextTokens: 100 },
       });
       const messages = await conn.waitForMessages(1, 5000);
@@ -67,6 +84,7 @@ describe('Instance events + usage', () => {
   it('stores the three parts of the context window separately', async () => {
     const res = await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       cookie: 'none=none',
       body: {
         event: 'Stop',
@@ -85,6 +103,7 @@ describe('Instance events + usage', () => {
   it('derives the total from the parts when an older hook sends no total', async () => {
     await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'Stop', inputTokens: 200, cacheReadTokens: 300, cacheCreationTokens: 500 },
     });
     const list = await api('/api/instances');
@@ -95,6 +114,7 @@ describe('Instance events + usage', () => {
   it('reports no split at all rather than zeros when only a total arrives', async () => {
     await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'Stop', contextTokens: 4242 },
     });
     const list = await api('/api/instances');
@@ -106,6 +126,7 @@ describe('Instance events + usage', () => {
   it('persists the status message and replaces it on the next event', async () => {
     await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'Notification', message: 'Claude needs your permission to use Bash' },
     });
     let inst = (await api('/api/instances')).json.find((i) => i.id === instanceId);
@@ -116,6 +137,7 @@ describe('Instance events + usage', () => {
     // or the dashboard keeps claiming the instance is waiting for permission.
     await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'Stop', contextTokens: 10 },
     });
     inst = (await api('/api/instances')).json.find((i) => i.id === instanceId);
@@ -126,6 +148,7 @@ describe('Instance events + usage', () => {
   it('accepts UserPromptSubmit — the event that distinguishes waiting from working', async () => {
     const res = await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'UserPromptSubmit', message: 'fix the auth bug', contextTokens: 1234 },
     });
     assert.equal(res.status, 202, res.text);
@@ -137,6 +160,7 @@ describe('Instance events + usage', () => {
   it('ignores usage for unknown event names', async () => {
     await api(`/api/instances/${instanceId}/event`, {
       method: 'POST',
+      headers: asInstance,
       body: { event: 'BogusEvent', contextTokens: 999999 },
     });
     const res = await api('/api/instances');

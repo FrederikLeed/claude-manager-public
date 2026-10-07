@@ -246,7 +246,7 @@ describe('recreate / image regressions', () => {
   // Older instances had no CM_INSTANCE_ID → autostart and hooks silently off.
   it('recreate re-asserts instance identity env', () => {
     const src = read('server/docker.js');
-    assert.match(src, /`CM_INSTANCE_ID=\$\{instanceId\}`, `CM_MANAGER_URL=\$\{MANAGER_URL\}`/);
+    assert.match(src, /`CM_INSTANCE_ID=\$\{instanceId\}`, `CM_MANAGER_URL=\$\{managerUrlFor\(host, MANAGER_URL\)\}`/);
   });
   // The 1Password package grabbed gid 1001 → claude became 1002, breaking volume ownership.
   it('claude user is created with fixed ids before other packages', () => {
@@ -256,6 +256,7 @@ describe('recreate / image regressions', () => {
     assert.match(df, /test "\$\(id -u claude\):\$\(id -g claude\)" = "1001:1001"/);
   });
 });
+
 
 describe('idle stop pane safety', async () => {
   const { paneState } = await import('../server/idle-stop.js');
@@ -334,7 +335,7 @@ describe('review fixes (2026-06-10 review, fixed 2026-09-16)', async () => {
   it('S4: recreate parks the old container and restores it on failure', () => {
     const src = read('server/docker.js');
     const park = src.indexOf('await container.rename({ name: parkedName });');
-    const create = src.indexOf('newContainer = await docker.createContainer({');
+    const create = src.indexOf('newContainer = await client.createContainer({');
     const remove = src.indexOf('await container.remove({ force: true });', create);
     assert.ok(park > -1 && park < create && create < remove);
     assert.match(src, /await container\.rename\(\{ name: oldName \}\)/);

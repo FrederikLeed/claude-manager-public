@@ -65,7 +65,9 @@ describe('byAttention', () => {
       { id: 'b', state: 'running', usage: { lastEvent: 'Notification' } },
       { id: 'c', state: 'running', usage: { lastEvent: 'UserPromptSubmit' } },
     ];
-    assert.deepEqual(byAttention(list).map((i) => i.id), ['b', 'c', 'a']);
+    // b is waiting and moves up; a (idle) and c (working) keep their order.
+    // Working must NOT outrank idle, or rows jump on every turn boundary.
+    assert.deepEqual(byAttention(list).map((i) => i.id), ['b', 'a', 'c']);
   });
 
   it('is stable — equal ranks keep their original order', () => {

@@ -80,10 +80,18 @@ export function needsInput(instance) {
   return instanceStatus(instance)?.kind === 'waiting';
 }
 
-/** Waiting instances to the top; otherwise the order is left alone. */
+/**
+ * Waiting instances to the top; everything else keeps its order.
+ *
+ * Only "needs input" is allowed to move a row. Ranking working above idle too
+ * meant a row jumped every time a turn started or ended — under the pointer,
+ * every ten seconds — which is exactly what the comment above said would not
+ * happen. The rank on each KIND is still exported for the drawer; it is not
+ * what sorts the list.
+ */
 export function byAttention(list) {
   return list
-    .map((item, i) => ({ item, i, rank: instanceStatus(item)?.rank ?? 2 }))
+    .map((item, i) => ({ item, i, rank: needsInput(item) ? 0 : 1 }))
     .sort((a, b) => a.rank - b.rank || a.i - b.i)
     .map((e) => e.item);
 }
