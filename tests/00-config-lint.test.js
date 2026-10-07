@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -196,13 +196,16 @@ describe('Compose / deploy config', () => {
   });
 });
 
-describe('Host-monitoring drop-ins', () => {
-  // These files are copied by hand onto the monitoring host, so nothing runs
-  // them here. Prometheus parses each scrape.d file as a document with a
-  // scrape_configs key -- a bare list is rejected and the whole reload fails,
-  // which took one round trip to learn.
-  const dir = path.join(__dirname, '..', 'scripts', 'host-monitoring');
-  const scrapeFiles = readdirSync(dir).filter((f) => f.endsWith('.scrape.yml'));
+// These files are copied by hand onto the monitoring host, so nothing runs
+// them here. Prometheus parses each scrape.d file as a document with a
+// scrape_configs key -- a bare list is rejected and the whole reload fails,
+// which took one round trip to learn. The public repository does not ship
+// scripts/, so the suite skips there instead of failing at describe time
+// (which node:test reports as "not ok" without counting it as a failure).
+const MONITORING_DIR = path.join(__dirname, '..', 'scripts', 'host-monitoring');
+describe('Host-monitoring drop-ins', { skip: existsSync(MONITORING_DIR) ? false : 'scripts/host-monitoring is not in this checkout' }, () => {
+  const dir = MONITORING_DIR;
+  const scrapeFiles = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.scrape.yml')) : [];
 
   it('ships at least the host-a, workstation and llm-backends scrape files', () => {
     for (const want of ['host-a.scrape.yml', 'workstation.scrape.yml', 'llm-backends.scrape.yml']) {
