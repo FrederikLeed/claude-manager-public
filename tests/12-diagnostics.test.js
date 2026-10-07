@@ -341,12 +341,16 @@ describe('review fixes (2026-06-10 review, fixed 2026-09-16)', async () => {
     assert.match(src, /await container\.rename\(\{ name: oldName \}\)/);
   });
 
-  // S5: LiteLLM/Ollama were published on every interface.
-  it('S5: LLM ports are published on localhost only', () => {
+  // S5: LiteLLM/Ollama were published on every interface. The invariant is
+  // that the REPO never publishes an LLM port beyond loopback: LiteLLM's bind is
+  // a per-host variable whose default is loopback, so a host that serves LAN
+  // clients must opt in explicitly (LITELLM_BIND in its .env) AND scope the
+  // sources with the DOCKER-USER rule — a published port bypasses ufw.
+  it('S5: LLM ports are published on localhost only by default', () => {
     const compose = read('docker-compose.yml');
-    assert.match(compose, /"127\.0\.0\.1:4000:4000"/);
+    assert.match(compose, /"\$\{LITELLM_BIND:-127\.0\.0\.1\}:4000:4000"/, 'LiteLLM must default to loopback');
     assert.match(compose, /"127\.0\.0\.1:11434:11434"/);
-    assert.doesNotMatch(compose, /^\s*- "(4000|11434):/m);
+    assert.doesNotMatch(compose, /^\s*- "(0\.0\.0\.0:)?(4000|11434):/m, 'no unconditional LAN publish of an LLM port');
   });
 
   // T3: a fixed test token became a standing admin credential.

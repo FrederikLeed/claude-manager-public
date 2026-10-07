@@ -78,7 +78,11 @@ services:
     container_name: cm-litellm
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4000:4000"   # localhost only; instances use cm-litellm internally
+      # Default loopback-only; instances reach it as cm-litellm on the bridge. A host
+      # that serves LAN clients sets LITELLM_BIND=0.0.0.0 in its .env and scopes the
+      # sources with the DOCKER-USER rule (host-harden.sh) — binding a LAN IP alone
+      # would drop loopback, and a published port bypasses ufw anyway.
+      - "${LITELLM_BIND:-127.0.0.1}:4000:4000"
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-litellm}@cm-litellm-db:5432/${POSTGRES_DB:-litellm}
