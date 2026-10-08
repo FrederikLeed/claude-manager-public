@@ -74,10 +74,14 @@ export function filterInstances(instances, f = {}) {
 const POLICY_ORDER = ['unrestricted', 'claude-github', 'claude-only', 'claude-full-dev'];
 
 /** Lay out one lane: model groups flowing left to right, wrapping rows. */
-function layoutLane(items, x0, y0, width) {
+/**
+ * One lane: groups of tiles flowing left to right, wrapping rows. Groups are
+ * keyed by `groupKey` and captioned by `groupLabel` (model by default).
+ */
+export function layoutLane(items, x0, y0, width, { groupKey = (n) => n.detail?.model || '', groupLabel = modelShort } = {}) {
   const groups = new Map();
   for (const n of items) {
-    const key = n.detail?.model || '';
+    const key = groupKey(n);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(n);
   }
@@ -90,7 +94,7 @@ function layoutLane(items, x0, y0, width) {
   for (const [model, list] of ordered) {
     list.sort((a, b) => POLICY_ORDER.indexOf(a.detail?.policy) - POLICY_ORDER.indexOf(b.detail?.policy)
       || (a.detail?.hostId || '').localeCompare(b.detail?.hostId || '') || a.label.localeCompare(b.label));
-    const text = modelShort(model);
+    const text = groupLabel(model);
     const perRow = Math.max(1, Math.floor((width + GAP) / PITCH));
     const cols = Math.min(list.length, perRow);
     const rows = Math.ceil(list.length / cols);

@@ -836,3 +836,18 @@ the LiteLLM router, or straight past it for Claude Max and the Copilot CLI, to
 the provider that answers. Hovering a tile traces its path; clicking opens its
 detail with an *Open terminal* button. The previous egress-graded network graph
 is one toggle away.
+
+### Fleet network map
+
+The second Fleet tab (`src/components/NetworkMap.jsx`, layout in
+`src/lib/network-map.js`, tested by `tests/19-network-map.test.js`) shows where
+each instance's traffic may go. Lanes are network policies, coloured warmer the
+more they let out (Claude only → Claude + GitHub → Full dev → Open). Allowlisted
+lanes flow into their host's `cm-proxy` gate, which fans out only to the
+destination groups the policy files actually name (Anthropic & Claude, GitHub &
+Copilot, package registries, 1Password); open lanes bypass the gate straight to
+"Anywhere". Recent proxy refusals (`/api/system/egress-denials`, in memory, reset
+when the manager restarts) gather in a red "Blocked recently" node and mark the
+instances that hit them. Docker-socket instances carry a dashed red ring; a
+pending access request an amber one. "Needs a look" filters to those. The older
+egress-graded graph remains as "Classic graph".

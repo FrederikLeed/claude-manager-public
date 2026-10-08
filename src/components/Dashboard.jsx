@@ -7,6 +7,7 @@ import InstanceRow from './InstanceRow.jsx';
 import { byAttention, needsInput } from '../lib/instance-status.js';
 import GraphView from './GraphView.jsx';
 import FleetMap from './FleetMap.jsx';
+import NetworkMap from './NetworkMap.jsx';
 import { useTopology } from '../hooks/useTopology.js';
 import NewInstanceModal from './NewInstanceModal.jsx';
 import TerminalPanel from './Terminal.jsx';
@@ -628,15 +629,15 @@ export default function Dashboard({ isAdmin, deviceId }) {
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-semibold text-gray-100">Fleet</h2>
               <div className="flex rounded-md overflow-hidden border border-gray-700 text-xs">
-                {[['map', 'Model map'], ['network', 'Network graph']].map(([k, label]) => (
+                {[['map', 'Model map'], ['network', 'Network map'], ['classic', 'Classic graph']].map(([k, label]) => (
                   <button key={k} onClick={() => setGraphMode(k)}
                     className={`px-2.5 py-1 ${graphMode === k ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-200'}`}>{label}</button>
                 ))}
               </div>
               <span className="text-[11px] text-gray-500 hidden md:inline">
-                {graphMode === 'map'
-                  ? 'every instance a tile · hover to trace its path · click for detail'
-                  : 'drag the background to pan · drag a node to arrange it · scroll to zoom · click for detail'}
+                {graphMode === 'classic'
+                  ? 'drag the background to pan · drag a node to arrange it · scroll to zoom · click for detail'
+                  : 'every instance a tile · hover to trace its path · click for detail'}
               </span>
             </div>
             <button
@@ -648,9 +649,9 @@ export default function Dashboard({ isAdmin, deviceId }) {
             </button>
           </div>
           <div className="flex-1 min-h-0">
-            {graphMode === 'map'
-              ? <FleetMap topology={topology} loading={topologyLoading} onOpenTerminal={(id) => { setShowGraph(false); handleTerminal(id); }} />
-              : <GraphView topology={topology} loading={topologyLoading} />}
+            {graphMode === 'map' && <FleetMap topology={topology} loading={topologyLoading} onOpenTerminal={(id) => { setShowGraph(false); handleTerminal(id); }} />}
+            {graphMode === 'network' && <NetworkMap topology={topology} loading={topologyLoading} onOpenTerminal={(id) => { setShowGraph(false); handleTerminal(id); }} />}
+            {graphMode === 'classic' && <GraphView topology={topology} loading={topologyLoading} />}
           </div>
         </div>
       )}
