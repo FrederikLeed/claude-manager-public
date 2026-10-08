@@ -117,3 +117,12 @@ describe('scopeKeyToBackend only narrows', () => {
     assert.match(fn, /if \(!target\.length\) throw/);
   });
 });
+
+describe('virtual keys never travel in a URL', () => {
+  it('no key/info query string anywhere in the server', () => {
+    for (const f of ['server/litellm.js', 'server/llm-routing.js', 'server/routes/litellm.js', 'server/docker.js']) {
+      assert.doesNotMatch(read(f), /key\/info\?key=/, f);
+    }
+    assert.match(read('server/litellm.js'), /litellmFetch\('\/v2\/key\/info', \{ method: 'POST', body: \{ keys: \[key\] \} \}\)/);
+  });
+});

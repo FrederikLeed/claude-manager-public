@@ -9,7 +9,7 @@
  * reaches more than it was created for.
  */
 import { config } from './config.js';
-import { litellmFetch } from './litellm.js';
+import { litellmFetch, getKeyInfo } from './litellm.js';
 
 export const BACKENDS = {
   'claude-max': {
@@ -157,8 +157,9 @@ export const MODEL_ENV_PREFIXES = ['ANTHROPIC_MODEL=', 'ANTHROPIC_DEFAULT_OPUS_M
 export async function scopeKeyToBackend(key, backend, { routes } = {}) {
   const allowed = routesForBackend(backend, routes || await listRoutes());
   if (!allowed.length) throw refuse(503, 'no_routes_for_backend', `LiteLLM serves no routes for ${backend}`);
-  const info = await litellmFetch(`/key/info?key=${encodeURIComponent(key)}`);
-  const have = info?.info?.models || [];
+  const info = await getKeyInfo(key);
+  if (!info) throw refuse(502, 'key_info_failed', 'LiteLLM did not describe the instance key');
+  const have = info.info.models || [];
   const target = have.length ? have.filter((m) => allowed.includes(m)) : allowed;
   if (!target.length) throw refuse(409, 'key_scope_empty', `the instance key reaches none of ${backend}'s routes`);
   if (have.length && target.length === have.length) return have;      // already within scope

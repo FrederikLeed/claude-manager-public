@@ -71,7 +71,11 @@ export async function rotateVirtualKey(oldKey, instanceId, instanceName) {
 
 export async function getKeyInfo(key) {
   try {
-    return await litellmFetch(`/key/info?key=${encodeURIComponent(key)}`);
+    // POST with the key in the body: a key in the query string ends up in any
+    // access log or proxy between here and the router.
+    const res = await litellmFetch('/v2/key/info', { method: 'POST', body: { keys: [key] } });
+    const info = Array.isArray(res?.info) ? res.info[0] : null;
+    return info ? { info } : null;
   } catch {
     return null;
   }
