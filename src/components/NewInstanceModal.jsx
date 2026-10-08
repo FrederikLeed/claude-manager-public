@@ -12,6 +12,7 @@ const LLM_OPTIONS = [
   { value: 'local-llm', label: 'Local LLM (Qwen3 30B)', badge: 'GPU' },
   { value: 'foundry', label: 'Azure AI Foundry (GPT-4.1-mini)', badge: null },
   { value: 'foundry-latest', label: 'Azure AI Foundry (GPT Latest)', badge: null },
+  { value: 'github-copilot', label: 'GitHub Copilot CLI (GPT, Claude, Gemini)', badge: null },
 ];
 
 const EXPIRY_OPTIONS = [
@@ -179,6 +180,8 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
                 ? 'Routes through LiteLLM to local Ollama. No login needed.'
                 : llmBackend === 'foundry'
                 ? 'Routes through LiteLLM to Azure AI Foundry (GPT-4.1-mini).'
+                : llmBackend === 'github-copilot'
+                ? 'Starts GitHub Copilot CLI instead of Claude Code; pick the model with /model. Token from 1Password. Needs an unrestricted, claude-github or claude-full-dev policy.'
                 : 'Routes through LiteLLM to Azure AI Foundry (GPT Latest).'}
             </p>
           </div>

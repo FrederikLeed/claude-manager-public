@@ -11,6 +11,9 @@ allowed_hosts:
   - objects.githubusercontent.com
   - gist.githubusercontent.com
   - ssh.github.com
+  # GitHub Copilot CLI (github-copilot backend): model API + telemetry
+  - .githubcopilot.com
+  - copilot-telemetry.githubusercontent.com
   # 1Password (op CLI, service account for the Claude vault) — subdomain wildcards
   - .1password.com
   - .1passwordusercontent.com

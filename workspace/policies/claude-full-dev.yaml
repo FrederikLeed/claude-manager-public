@@ -12,6 +12,9 @@ allowed_hosts:
   - objects.githubusercontent.com
   - gist.githubusercontent.com
   - ssh.github.com
+  # GitHub Copilot CLI (github-copilot backend): model API + telemetry
+  - .githubcopilot.com
+  - copilot-telemetry.githubusercontent.com
   # npm
   - registry.npmjs.org
   - registry.yarnpkg.com

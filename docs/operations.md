@@ -67,7 +67,7 @@ container.
 | Notes | No | Free-text for your own reference |
 | Tags | No | Free-text tags (used for filtering) |
 | Network policy | Yes | `claude-only` / `claude-github` / `claude-full-dev` / `unrestricted` |
-| LLM backend | Yes | `claude-max` / `local-llm` / `foundry` / `foundry-latest` |
+| LLM backend | Yes | `claude-max` / `local-llm` / `foundry` / `foundry-latest` / `github-copilot` |
 | Auto-start | No | When checked, the container starts immediately after creation |
 | Allow Docker socket | No | Mounts that host's `/var/run/docker.sock` (registers a 24 h capability grant). **Refused outright on the host running the manager** — 409 `socket_on_manager_host`, because it would hand the instance control of the whole fleet. |
 | Expiry hours | No | Override the default 24 h TTL on high-risk capability grants |
@@ -236,6 +236,7 @@ Each instance picks one of:
 | `local-llm` | Qwen3 30B-A3B via Ollama → LiteLLM | `cm-ollama` reachable, `LITELLM_MASTER_KEY` set |
 | `foundry` | Azure AI Foundry `gpt-4.1-mini-1` via LiteLLM | `AZURE_AI_API_KEY` |
 | `foundry-latest` | Azure AI Foundry `gpt-chat-latest` via LiteLLM | `GPTLATEST_AZURE_AI_API_KEY` |
+| `github-copilot` | GitHub Copilot CLI (`copilot`) instead of Claude Code; GPT, Claude and Gemini models via `/model` or `--model` | `COPILOT_TOKEN_REF` (op:// reference, resolved inside the instance) |
 
 Non-`claude-max` backends are injected a **per-backend** LiteLLM key
 stored in `instances.litellm_key`. Each key has a budget (default $20,

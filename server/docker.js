@@ -23,6 +23,9 @@ const MANAGER_URL = 'http://claude-manager:3002';
 
 // Env vars the manager owns and re-injects on every recreate (so rotating a
 // secret in .env reaches instances via "Update Claude"/recreate).
+// Backends that do not route Claude Code through LiteLLM.
+export const NON_LITELLM_BACKENDS = new Set(['claude-max', 'github-copilot']);
+
 const MANAGED_SECRET_PREFIXES = ['OP_SERVICE_ACCOUNT_TOKEN='];
 function managedSecretEnv() {
   return config.OP_SERVICE_ACCOUNT_TOKEN ? [`OP_SERVICE_ACCOUNT_TOKEN=${config.OP_SERVICE_ACCOUNT_TOKEN}`] : [];
@@ -314,6 +317,7 @@ export async function getContainer(id) {
 export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max', hostId = DEFAULT_HOST_ID }) {
   // Everything below runs against the chosen host's daemon, and every host path
   // in the spec has to exist THERE — binds are resolved by the daemon, not here.
+  assertBackendFitsPolicy(llmBackend, networkPolicy);
   const host = await admit({ hostId, dockerSocket, networkPolicy });
   const docker = await dockerFor(host.id);
   const paths = hostPaths(host);
@@ -465,7 +469,14 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   if (config.LITELLM_API_BASE) {
     containerEnv.push(`LITELLM_API_BASE=${config.LITELLM_API_BASE}`);
   }
-  if (llmBackend && llmBackend !== 'claude-max' && config.LITELLM_API_BASE) {
+  containerEnv.push(`CM_LLM_BACKEND=${llmBackend || 'claude-max'}`);
+  // GitHub Copilot: the instance runs GitHub's own `copilot` CLI, not Claude Code
+  // through LiteLLM. Only the vault *reference* goes into the env; the wrapper in
+  // the image resolves it with the instance's 1Password token when copilot runs.
+  if (llmBackend === 'github-copilot') {
+    containerEnv.push(`CM_COPILOT_TOKEN_REF=${config.COPILOT_TOKEN_REF}`);
+  }
+  if (llmBackend && !NON_LITELLM_BACKENDS.has(llmBackend) && config.LITELLM_API_BASE) {
     containerEnv.push(`ANTHROPIC_BASE_URL=${config.LITELLM_API_BASE}`);
     // Use per-backend scoped virtual key for correct model routing
     const backendKeys = {
@@ -827,6 +838,7 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   // bypassed admit() entirely, so a restricted policy could land on a remote
   // host, and the socket could be granted on the manager's own.
   await admit({ hostId: host?.id || DEFAULT_HOST_ID, dockerSocket: newDockerSocket, networkPolicy: newNetworkPolicy, existing: true });
+  assertBackendFitsPolicy(oldLabels[LABELS.LLM_BACKEND], newNetworkPolicy);
 
   // Build new bind list: keep existing binds, remove docker socket
   const existingBinds = (oldHostConfig.Binds || []).filter(
@@ -1051,6 +1063,21 @@ function formatInspectInfo(inspect) {
 /**
  * List available network policies from the policies directory.
  */
+/**
+ * A restricted policy must let the backend's own endpoint through, or the
+ * instance starts with a model it can never reach. Only github-copilot has an
+ * endpoint outside LiteLLM/Anthropic that a policy can block.
+ */
+export function assertBackendFitsPolicy(llmBackend, networkPolicy, policies = listPolicies()) {
+  if (llmBackend !== 'github-copilot' || !networkPolicy || networkPolicy === 'unrestricted') return;
+  const pol = policies.find((p) => p.id === networkPolicy || p.name === networkPolicy);
+  if (pol?.unrestricted || pol?.allowedHosts?.includes('.githubcopilot.com')) return;
+  const err = new Error(`Network policy "${networkPolicy}" does not allow GitHub Copilot (.githubcopilot.com); use unrestricted, claude-github or claude-full-dev`);
+  err.statusCode = 409;
+  err.code = 'policy_blocks_backend';
+  throw err;
+}
+
 export function listPolicies() {
   const policiesDir = config.POLICIES_DIR;
   try {

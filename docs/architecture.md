@@ -218,6 +218,7 @@ Each instance picks one of:
 | `local-llm`      | Qwen3 30B-A3B on Ollama, fronted by LiteLLM.                  |
 | `foundry`        | Azure AI Foundry — deployment `gpt-4.1-mini-1`.               |
 | `foundry-latest` | Azure AI Foundry — deployment `gpt-chat-latest`.              |
+| `github-copilot` | GitHub's `copilot` CLI, started by cm-autostart instead of Claude Code. Not routed through LiteLLM; the image's `/usr/local/bin/copilot` wrapper resolves `CM_COPILOT_TOKEN_REF` from 1Password at run time. Refused (`policy_blocks_backend`) on policies without `.githubcopilot.com`. |
 
 For any non-`claude-max` backend, the manager:
 
@@ -592,7 +593,7 @@ Applied to every container the manager creates:
 | `claude-manager.id`                | `{8-char-uuid}`                                        | Links container to `instances.id`          |
 | `claude-manager.name`              | `{project-name}`                                       | Human-readable name on the container       |
 | `claude-manager.network-policy`    | `claude-only` / `claude-github` / `claude-full-dev` / `unrestricted` | Read by `syncAllACLs` on restart |
-| `claude-manager.llm-backend`       | `claude-max` / `local-llm` / `foundry` / `foundry-latest` | Read by the UI for the badge            |
+| `claude-manager.llm-backend`       | `claude-max` / `local-llm` / `foundry` / `foundry-latest` / `github-copilot` | Read by the UI for the badge            |
 
 ### 9.3 Docker ↔ SQLite
 

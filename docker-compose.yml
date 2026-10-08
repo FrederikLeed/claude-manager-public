@@ -35,6 +35,7 @@ services:
       - WORKSPACE_SRC_DIR=/workspace-src
       - IMAGE_UPDATE_INTERVAL_HOURS=${IMAGE_UPDATE_INTERVAL_HOURS:-24}
       - CLAUDE_IMAGE=${CLAUDE_IMAGE:-claude-workspace:latest}
+      - COPILOT_TOKEN_REF=${COPILOT_TOKEN_REF:-}
       - CLAUDE_NETWORK=claude-manager-net
       - MAX_INSTANCES=${MAX_INSTANCES:-20}
       - INSTANCE_SHARED_DIR=${INSTANCE_SHARED_DIR:-}

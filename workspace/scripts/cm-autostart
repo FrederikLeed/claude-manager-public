@@ -9,6 +9,16 @@
 # CM_CLAUDE_SETTINGS  optional JSON passed as --settings (e.g. to disable RC in tests)
 set -uo pipefail
 
+# github-copilot instances run GitHub's Copilot CLI instead of Claude Code.
+# --allow-all-tools is its equivalent of --dangerously-skip-permissions; the
+# container is the sandbox. --continue picks up the last session after a restart.
+if [ "${CM_LLM_BACKEND:-}" = "github-copilot" ]; then
+  cargs=(--allow-all-tools)
+  [ -d "$HOME/.copilot/session-state" ] && [ -n "$(ls -A "$HOME/.copilot/session-state" 2>/dev/null)" ] && cargs+=(--continue)
+  cd /workspace && copilot "${cargs[@]}"
+  exit
+fi
+
 args=(--dangerously-skip-permissions)
 [ -n "${CM_CLAUDE_SETTINGS:-}" ] && args+=(--settings "$CM_CLAUDE_SETTINGS")
 

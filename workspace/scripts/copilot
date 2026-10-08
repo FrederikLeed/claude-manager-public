@@ -1,0 +1,18 @@
+#!/bin/bash
+# copilot — wrapper for GitHub Copilot CLI (/usr/bin/copilot).
+#
+# On a github-copilot instance the manager sets CM_COPILOT_TOKEN_REF to an
+# op:// reference. Resolve it here, at run time, with the instance's 1Password
+# service account, so the token lives only in this process's environment —
+# not in the image, `docker inspect`, or a file. COPILOT_GITHUB_TOKEN is what
+# the CLI reads first; GH_TOKEN is deliberately left alone so `gh` keeps its
+# own identity.
+if [ -z "${COPILOT_GITHUB_TOKEN:-}" ] && [ -n "${CM_COPILOT_TOKEN_REF:-}" ]; then
+  if tok="$(op read "$CM_COPILOT_TOKEN_REF" 2>/dev/null)" && [ -n "$tok" ]; then
+    export COPILOT_GITHUB_TOKEN="$tok"
+  else
+    echo "[copilot] could not read $CM_COPILOT_TOKEN_REF from 1Password — falling back to /login" >&2
+  fi
+  unset tok
+fi
+exec /usr/bin/copilot "$@"

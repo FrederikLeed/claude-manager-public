@@ -116,7 +116,7 @@ export default async function instanceRoutes(fastify) {
           autoStart: { type: 'boolean', default: true },
           dockerSocket: { type: 'boolean', default: false },
           networkPolicy: { type: 'string', enum: NETWORK_POLICIES, default: 'unrestricted' },
-          llmBackend: { type: 'string', enum: ['claude-max', 'local-llm', 'foundry', 'foundry-latest'], default: 'claude-max' },
+          llmBackend: { type: 'string', enum: ['claude-max', 'local-llm', 'foundry', 'foundry-latest', 'github-copilot'], default: 'claude-max' },
           expiryHours: { type: 'number', minimum: 0 },
           hostId: { type: 'string', minLength: 1, maxLength: 32 },
         },

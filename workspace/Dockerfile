@@ -97,6 +97,22 @@ ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/claude-code
 RUN npm install -g @anthropic-ai/claude-code@latest typescript ts-node https-proxy-agent \
     && rm -f /tmp/claude-code-latest.json
 
+# GitHub Copilot CLI, for instances on the github-copilot backend. Same cache
+# trick as above. The real binary lands in /usr/bin; /usr/local/bin/copilot
+# (earlier on PATH) is a wrapper that resolves the token from 1Password at run
+# time, so it is never baked into the image or the container's env.
+ADD https://registry.npmjs.org/@github/copilot/latest /tmp/copilot-latest.json
+RUN npm install -g @github/copilot@latest \
+    && rm -f /tmp/copilot-latest.json \
+    && test -x /usr/bin/copilot
+COPY scripts/copilot /usr/local/bin/copilot
+RUN sed -i 's/\r$//' /usr/local/bin/copilot \
+    && chmod +x /usr/local/bin/copilot \
+    && mkdir -p /home/claude/.copilot \
+    && printf '{\n  "trustedFolders": ["/workspace"]\n}\n' > /home/claude/.copilot/config.json \
+    && chown -R claude:claude /home/claude/.copilot
+# ^ pre-trust /workspace so autostart lands at Copilot's prompt, not a trust dialog
+
 # Fail the build if the claude user's ids drifted
 RUN test "$(id -u claude):$(id -g claude)" = "1001:1001"
 

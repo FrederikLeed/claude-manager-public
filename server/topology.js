@@ -133,6 +133,13 @@ export async function buildTopology() {
     detail: { via: 'api.anthropic.com', routing: 'direct from the instance' },
   });
   edges.push({ source: 'backend:claude-max', target: 'internet', kind: 'reaches' });
+  nodes.push({
+    id: 'backend:github-copilot',
+    type: 'backend',
+    label: 'GitHub Copilot',
+    detail: { via: 'api.githubcopilot.com', routing: 'copilot CLI, direct from the instance' },
+  });
+  edges.push({ source: 'backend:github-copilot', target: 'internet', kind: 'reaches' });
 
   if (config.LITELLM_API_BASE) {
     // Ask the router what it is actually serving, rather than describing it.
@@ -299,7 +306,7 @@ export async function buildTopology() {
     }
 
     // Which model it talks to, and how it gets there.
-    const backendNode = backend === 'claude-max' ? 'backend:claude-max' : 'backend:litellm';
+    const backendNode = backend === 'claude-max' || backend === 'github-copilot' ? `backend:${backend}` : 'backend:litellm';
     if (nodes.some((n) => n.id === backendNode)) {
       edges.push({ source: id, target: backendNode, kind: 'uses-model', label: backend });
     }

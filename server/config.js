@@ -70,6 +70,10 @@ export const config = Object.freeze({
   OP_FLEET_SERVICE_ACCOUNT_TOKEN: process.env.OP_FLEET_SERVICE_ACCOUNT_TOKEN || '',
   // LiteLLM proxy
   LITELLM_API_BASE: process.env.LITELLM_API_BASE || '',
+  // 1Password reference handed to github-copilot instances; resolved inside the
+  // instance by the copilot wrapper, never by the manager. Any token Copilot CLI
+  // accepts: a gh OAuth token, or a fine-grained PAT with "Copilot Requests".
+  COPILOT_TOKEN_REF: process.env.COPILOT_TOKEN_REF || 'op://Claude/github-copilot/credential',
   LITELLM_MASTER_KEY: process.env.LITELLM_MASTER_KEY || '',
   LITELLM_DEFAULT_BUDGET: parseFloat(process.env.LITELLM_DEFAULT_BUDGET || '20'),
 });
