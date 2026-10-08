@@ -864,12 +864,16 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
   // Re-issue the LiteLLM key too: instances created before per-backend keys
   // existed carry the master key, which reaches the paid anthropic/* routes.
+  // Fail closed: whatever the label or config says, a master key never survives.
   const routedBackend = oldLabels[LABELS.LLM_BACKEND];
-  if (routedBackend && !NON_LITELLM_BACKENDS.has(routedBackend) && config.LITELLM_API_BASE) {
-    const k = backendKeyFor(routedBackend);
-    for (let j = newEnv.length - 1; j >= 0; j--) if (newEnv[j].startsWith('ANTHROPIC_API_KEY=')) newEnv.splice(j, 1);
-    newEnv.push(`ANTHROPIC_API_KEY=${k}`);
+  const routed = routedBackend && !NON_LITELLM_BACKENDS.has(routedBackend) && config.LITELLM_API_BASE;
+  const k = routed ? backendKeyFor(routedBackend) : null;   // throws before anything is stopped
+  for (let j = newEnv.length - 1; j >= 0; j--) {
+    const e = newEnv[j];
+    const isMaster = config.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=${config.LITELLM_MASTER_KEY}`;
+    if ((routed && e.startsWith('ANTHROPIC_API_KEY=')) || isMaster) newEnv.splice(j, 1);
   }
+  if (k) newEnv.push(`ANTHROPIC_API_KEY=${k}`);
 
   if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
     newEnv.push(

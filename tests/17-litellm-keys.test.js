@@ -24,14 +24,19 @@ describe('paid Anthropic routes stay out of instance keys', () => {
   it('instances never receive the master key', () => {
     const src = read('server/docker.js');
     assert.doesNotMatch(src, /backendKeys\[llmBackend\] \|\| config\.LITELLM_MASTER_KEY/);
-    assert.doesNotMatch(src, /ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}/);
+    assert.doesNotMatch(src, /push\(`ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
     assert.match(src, /err\.code = 'backend_key_missing'/);
     // checked before admit(), i.e. before any volume or container exists
     const create = src.slice(src.indexOf('export async function createInstance'));
     assert.ok(create.indexOf('backendKeyFor(llmBackend)') < create.indexOf('createVolume'));
     // recreate swaps an old master key for the backend key
     const re = src.slice(src.indexOf('export async function recreateInstance'));
-    assert.match(re.slice(0, re.indexOf('\nexport ')), /backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
+    const body = re.slice(0, re.indexOf('\nexport '));
+    assert.match(body, /backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
+    // a master key is dropped even when the backend is not routed (fail closed)
+    assert.match(body, /isMaster = config\.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
+    // and the swap happens before the old container is stopped
+    assert.ok(body.indexOf('backendKeyFor(routedBackend)') < body.indexOf('container.stop('));
   });
 
   it('every anthropic/* route has a price, so budgets count it', () => {
