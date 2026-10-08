@@ -862,6 +862,14 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     `CM_NETWORK_POLICY=${newNetworkPolicy}`, ...managedSecretEnv(),
   );
   if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
+  // Re-issue the LiteLLM key too: instances created before per-backend keys
+  // existed carry the master key, which reaches the paid anthropic/* routes.
+  const routedBackend = oldLabels[LABELS.LLM_BACKEND];
+  if (routedBackend && !NON_LITELLM_BACKENDS.has(routedBackend) && config.LITELLM_API_BASE) {
+    const k = backendKeyFor(routedBackend);
+    for (let j = newEnv.length - 1; j >= 0; j--) if (newEnv[j].startsWith('ANTHROPIC_API_KEY=')) newEnv.splice(j, 1);
+    newEnv.push(`ANTHROPIC_API_KEY=${k}`);
+  }
 
   if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
     newEnv.push(

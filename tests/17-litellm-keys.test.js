@@ -29,6 +29,9 @@ describe('paid Anthropic routes stay out of instance keys', () => {
     // checked before admit(), i.e. before any volume or container exists
     const create = src.slice(src.indexOf('export async function createInstance'));
     assert.ok(create.indexOf('backendKeyFor(llmBackend)') < create.indexOf('createVolume'));
+    // recreate swaps an old master key for the backend key
+    const re = src.slice(src.indexOf('export async function recreateInstance'));
+    assert.match(re.slice(0, re.indexOf('\nexport ')), /backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
   });
 
   it('every anthropic/* route has a price, so budgets count it', () => {
