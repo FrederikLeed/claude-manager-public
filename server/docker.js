@@ -318,6 +318,8 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   // Everything below runs against the chosen host's daemon, and every host path
   // in the spec has to exist THERE — binds are resolved by the daemon, not here.
   assertBackendFitsPolicy(llmBackend, networkPolicy);
+  // Resolve before anything is created, so a missing key leaves nothing behind.
+  if (llmBackend && !NON_LITELLM_BACKENDS.has(llmBackend) && config.LITELLM_API_BASE) backendKeyFor(llmBackend);
   const host = await admit({ hostId, dockerSocket, networkPolicy });
   const docker = await dockerFor(host.id);
   const paths = hostPaths(host);
@@ -478,16 +480,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   }
   if (llmBackend && !NON_LITELLM_BACKENDS.has(llmBackend) && config.LITELLM_API_BASE) {
     containerEnv.push(`ANTHROPIC_BASE_URL=${config.LITELLM_API_BASE}`);
-    // Use per-backend scoped virtual key for correct model routing
-    const backendKeys = {
-      'local-llm': process.env.LITELLM_KEY_LOCAL_LLM,
-      'foundry': process.env.LITELLM_KEY_FOUNDRY,
-      'foundry-latest': process.env.LITELLM_KEY_FOUNDRY_LATEST,
-    };
-    const apiKey = backendKeys[llmBackend] || config.LITELLM_MASTER_KEY;
-    if (apiKey) {
-      containerEnv.push(`ANTHROPIC_API_KEY=${apiKey}`);
-    }
+    containerEnv.push(`ANTHROPIC_API_KEY=${backendKeyFor(llmBackend)}`);
   }
 
   // Create the container
@@ -1075,6 +1068,24 @@ export function assertBackendFitsPolicy(llmBackend, networkPolicy, policies = li
   const err = new Error(`Network policy "${networkPolicy}" does not allow GitHub Copilot (.githubcopilot.com); use unrestricted, claude-github or claude-full-dev`);
   err.statusCode = 409;
   err.code = 'policy_blocks_backend';
+  throw err;
+}
+
+/**
+ * The LiteLLM key an instance on this backend gets. Per-backend keys are scoped
+ * to the backend's models; there is deliberately no master-key fallback, since
+ * the master key reaches every route (anthropic/* included) with no budget.
+ */
+export function backendKeyFor(llmBackend) {
+  const keys = {
+    'local-llm': process.env.LITELLM_KEY_LOCAL_LLM,
+    'foundry': process.env.LITELLM_KEY_FOUNDRY,
+    'foundry-latest': process.env.LITELLM_KEY_FOUNDRY_LATEST,
+  };
+  if (keys[llmBackend]) return keys[llmBackend];
+  const err = new Error(`No LiteLLM key configured for backend "${llmBackend}" (set LITELLM_KEY_${String(llmBackend).toUpperCase().replace(/-/g, '_')})`);
+  err.statusCode = 409;
+  err.code = 'backend_key_missing';
   throw err;
 }
 

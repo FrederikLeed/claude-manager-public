@@ -24,11 +24,24 @@ async function litellmFetch(path, { method = 'GET', body } = {}) {
   return res.json();
 }
 
+// Routes billed to the Anthropic API credit. A key minted for an instance must
+// never reach them: LiteLLM treats an empty models list as "every model".
+export const PAID_ROUTE_PREFIX = 'anthropic/';
+
+export function instanceModels(allModelIds) {
+  return allModelIds.filter((m) => !m.startsWith(PAID_ROUTE_PREFIX));
+}
+
 export async function createVirtualKey(instanceId, instanceName) {
+  const all = ((await litellmFetch('/v1/models'))?.data || []).map((m) => m.id);
+  const models = instanceModels(all);
+  // Fail closed: an empty list would grant everything, paid routes included.
+  if (!models.length) throw new Error('LiteLLM returned no models; refusing to mint an unrestricted key');
   return litellmFetch('/key/generate', {
     method: 'POST',
     body: {
       key_alias: `cm-${instanceId}`,
+      models,
       metadata: { instance_id: instanceId, instance_name: instanceName },
       max_budget: config.LITELLM_DEFAULT_BUDGET,
     },
