@@ -35,7 +35,10 @@ describe('paid Anthropic routes stay out of instance keys', () => {
     // recreate prefers the instance's own key, falling back to the backend key
     const re = src.slice(src.indexOf('export async function recreateInstance'));
     const body = re.slice(0, re.indexOf('\nexport '));
-    assert.match(body, /getLiteLLMKey\(instanceId\) \|\| backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
+    assert.match(body, /const stored = routed \? getLiteLLMKey\(instanceId\) : null;[\s\S]*stored \|\| backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
+    // a stored key is narrowed to its backend's routes before reuse, before the stop
+    assert.match(body, /if \(stored\) await scopeKeyToBackend\(stored, routedBackend\);/);
+    assert.ok(body.indexOf('scopeKeyToBackend(') < body.indexOf('container.stop('));
     // a master key is dropped even when the backend is not routed (fail closed)
     assert.match(body, /isMaster = config\.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
     // and the swap happens before the old container is stopped

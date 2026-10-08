@@ -146,3 +146,20 @@ export function modelEnv(model) {
 
 export const MODEL_ENV_PREFIXES = ['ANTHROPIC_MODEL=', 'ANTHROPIC_DEFAULT_OPUS_MODEL=', 'ANTHROPIC_DEFAULT_SONNET_MODEL=',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL=', 'ANTHROPIC_SMALL_FAST_MODEL=', 'CLAUDE_CODE_SUBAGENT_MODEL='];
+
+/**
+ * Narrow an existing key to exactly its backend's routes. Keys minted before
+ * per-backend scoping reach every non-paid route; recreate injects the stored
+ * key, so it must not carry that breadth into the new container. Throws if the
+ * router refuses, so recreate fails closed.
+ */
+export async function scopeKeyToBackend(key, backend, { routes } = {}) {
+  const models = routesForBackend(backend, routes || await listRoutes());
+  if (!models.length) throw refuse(503, 'no_routes_for_backend', `LiteLLM serves no routes for ${backend}`);
+  const res = await litellmFetch('/key/update', { method: 'POST', body: { key, models } });
+  const got = res?.models || [];
+  if (got.length !== models.length || got.some((m) => !models.includes(m))) {
+    throw refuse(502, 'key_scope_failed', `could not narrow the instance key to ${backend}`);
+  }
+  return models;
+}

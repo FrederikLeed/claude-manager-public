@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { chownSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { config } from './config.js';
-import { BACKENDS, isRouted, listRoutes, resolveModel, mintInstanceKey, litellmUrlFor, modelEnv, MODEL_ENV_PREFIXES } from './llm-routing.js';
+import { BACKENDS, isRouted, listRoutes, resolveModel, mintInstanceKey, scopeKeyToBackend, litellmUrlFor, modelEnv, MODEL_ENV_PREFIXES } from './llm-routing.js';
 import { deleteVirtualKey } from './litellm.js';
 import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKey, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
@@ -881,7 +881,12 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   const routedBackend = oldLabels[LABELS.LLM_BACKEND];
   const routed = routedBackend && isRouted(routedBackend) && config.LITELLM_API_BASE;
   // The instance's own key when it has one, else the legacy per-backend key.
-  const k = routed ? (getLiteLLMKey(instanceId) || backendKeyFor(routedBackend)) : null;   // throws before anything is stopped
+  const stored = routed ? getLiteLLMKey(instanceId) : null;
+  // A stored key is narrowed to this backend's routes before it is reused: keys
+  // minted before per-backend scoping reach every non-paid route. Both calls
+  // throw before anything is stopped.
+  if (stored) await scopeKeyToBackend(stored, routedBackend);
+  const k = routed ? (stored || backendKeyFor(routedBackend)) : null;
   const url = routed ? litellmUrlFor(host) : null;
   for (let j = newEnv.length - 1; j >= 0; j--) {
     const e = newEnv[j];
