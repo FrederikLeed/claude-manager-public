@@ -148,18 +148,24 @@ export const MODEL_ENV_PREFIXES = ['ANTHROPIC_MODEL=', 'ANTHROPIC_DEFAULT_OPUS_M
   'ANTHROPIC_DEFAULT_HAIKU_MODEL=', 'ANTHROPIC_SMALL_FAST_MODEL=', 'CLAUDE_CODE_SUBAGENT_MODEL='];
 
 /**
- * Narrow an existing key to exactly its backend's routes. Keys minted before
- * per-backend scoping reach every non-paid route; recreate injects the stored
- * key, so it must not carry that breadth into the new container. Throws if the
- * router refuses, so recreate fails closed.
+ * Narrow an existing key to its backend's routes, never widen it. Keys minted
+ * before per-backend scoping reach every non-paid route, and an empty list
+ * means "every model" to LiteLLM, so both are cut down to the backend. A key
+ * that is already narrower (say, one model) keeps exactly what it had. Throws
+ * if nothing would remain or the router refuses, so recreate fails closed.
  */
 export async function scopeKeyToBackend(key, backend, { routes } = {}) {
-  const models = routesForBackend(backend, routes || await listRoutes());
-  if (!models.length) throw refuse(503, 'no_routes_for_backend', `LiteLLM serves no routes for ${backend}`);
-  const res = await litellmFetch('/key/update', { method: 'POST', body: { key, models } });
+  const allowed = routesForBackend(backend, routes || await listRoutes());
+  if (!allowed.length) throw refuse(503, 'no_routes_for_backend', `LiteLLM serves no routes for ${backend}`);
+  const info = await litellmFetch(`/key/info?key=${encodeURIComponent(key)}`);
+  const have = info?.info?.models || [];
+  const target = have.length ? have.filter((m) => allowed.includes(m)) : allowed;
+  if (!target.length) throw refuse(409, 'key_scope_empty', `the instance key reaches none of ${backend}'s routes`);
+  if (have.length && target.length === have.length) return have;      // already within scope
+  const res = await litellmFetch('/key/update', { method: 'POST', body: { key, models: target } });
   const got = res?.models || [];
-  if (got.length !== models.length || got.some((m) => !models.includes(m))) {
+  if (got.length !== target.length || got.some((m) => !target.includes(m))) {
     throw refuse(502, 'key_scope_failed', `could not narrow the instance key to ${backend}`);
   }
-  return models;
+  return target;
 }

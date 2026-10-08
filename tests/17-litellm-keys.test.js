@@ -107,3 +107,13 @@ describe('per-backend routing', async () => {
     assert.throws(() => r.litellmUrlFor({ id: 'ws', kind: 'ssh' }), (e) => e.code === 'host_cannot_reach_litellm');
   });
 });
+
+describe('scopeKeyToBackend only narrows', () => {
+  it('intersects with the backend, treats an empty list as unscoped, never adds', () => {
+    const src = read('server/llm-routing.js');
+    const fn = src.slice(src.indexOf('export async function scopeKeyToBackend'));
+    assert.match(fn, /const target = have\.length \? have\.filter\(\(m\) => allowed\.includes\(m\)\) : allowed;/);
+    assert.match(fn, /if \(have\.length && target\.length === have\.length\) return have;/);
+    assert.match(fn, /if \(!target\.length\) throw/);
+  });
+});
