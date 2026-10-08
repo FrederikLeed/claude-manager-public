@@ -55,8 +55,8 @@ describe('paid Anthropic routes stay out of instance keys', () => {
 describe('GitHub Copilot routes', () => {
   it('every copilot/* route has a stand-in price and the token never sits in the image', () => {
     const cfg = read('litellm/config.yaml');
-    const blocks = cfg.split(/\n(?=  - model_name: )/).filter((b) => b.includes('model_name: copilot/'));
-    assert.ok(blocks.length >= 10, `copilot routes: ${blocks.length}`);
+    const blocks = cfg.split(/\n(?=  - model_name: )/).filter((b) => b.includes('model_name: ghcopilot/'));
+    assert.ok(blocks.length >= 10, `ghcopilot routes: ${blocks.length}`);
     for (const b of blocks) {
       assert.match(b, /model: github_copilot\//);
       assert.match(b, /input_cost_per_token: 0\.0+[1-9]/);

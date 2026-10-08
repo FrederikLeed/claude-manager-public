@@ -91,7 +91,7 @@ services:
       - AZURE_AI_API_BASE=${AZURE_AI_API_BASE:-}
       - GPTLATEST_AZURE_AI_API_KEY=${GPTLATEST_AZURE_AI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      # GitHub Copilot (copilot/* routes): OAuth token from LiteLLM's device flow,
+      # GitHub Copilot (ghcopilot/* routes): OAuth token from LiteLLM's device flow,
       # written to a tmpfs file at start by litellm/copilot-entrypoint.sh.
       - GITHUB_COPILOT_OAUTH=${GITHUB_COPILOT_OAUTH:-}
       - GITHUB_COPILOT_TOKEN_DIR=/run/gh-copilot
