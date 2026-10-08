@@ -238,6 +238,13 @@ Each instance picks one of:
 | `foundry-latest` | Azure AI Foundry `gpt-chat-latest` via LiteLLM | `GPTLATEST_AZURE_AI_API_KEY` |
 | `github-copilot` | GitHub Copilot CLI (`copilot`) instead of Claude Code; GPT, Claude and Gemini models via `/model` or `--model` | `COPILOT_TOKEN_REF` (op:// reference, resolved inside the instance) |
 
+LiteLLM also serves every model of the Anthropic API workspace as `anthropic/<model id>`
+(e.g. `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1`), with the key in
+`ANTHROPIC_API_KEY` on cm-litellm. The prefix keeps them apart from the bare Claude ids,
+which are aliases for the local Qwen3 on the `local-llm` backend. The key is user-scoped, so
+each route sends `anthropic-workspace-id`. Spend is priced per route in `litellm/config.yaml`
+(Haiku 5.5 has no price there yet and logs $0).
+
 Non-`claude-max` backends are injected a **per-backend** LiteLLM key
 stored in `instances.litellm_key`. Each key has a budget (default $20,
 configurable via `LITELLM_DEFAULT_BUDGET`). The **LiteLLM panel** on

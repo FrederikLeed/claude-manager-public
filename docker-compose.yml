@@ -90,6 +90,7 @@ services:
       - AZURE_AI_API_KEY=${AZURE_AI_API_KEY:-}
       - AZURE_AI_API_BASE=${AZURE_AI_API_BASE:-}
       - GPTLATEST_AZURE_AI_API_KEY=${GPTLATEST_AZURE_AI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     depends_on:
       cm-litellm-db:

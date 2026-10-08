@@ -24,6 +24,121 @@ model_list:
       api_key: os.environ/GPTLATEST_AZURE_AI_API_KEY
       api_base: os.environ/AZURE_AI_API_BASE
 
+  # Anthropic API (direct, $200/month credit). Routes are named anthropic/<id> because
+  # the bare Claude ids above are aliases for the local Qwen3 (local-llm backend).
+  # The key is user-scoped (sk-ant-usr), so every call must name the workspace.
+  # List generated from GET /v1/models for that workspace on 2026-10-08.
+  - model_name: anthropic/claude-fable-5-1
+    litellm_params:
+      model: anthropic/claude-fable-5-1
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.00001
+      output_cost_per_token: 0.00005
+  - model_name: anthropic/claude-fable-5
+    litellm_params:
+      model: anthropic/claude-fable-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.00001
+      output_cost_per_token: 0.00005
+  - model_name: anthropic/claude-opus-5-5
+    litellm_params:
+      model: anthropic/claude-opus-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000004
+      output_cost_per_token: 0.00002
+  - model_name: anthropic/claude-opus-5
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: anthropic/claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: anthropic/claude-opus-4-7
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: anthropic/claude-opus-4-6
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: anthropic/claude-opus-4-5-20251101
+    litellm_params:
+      model: anthropic/claude-opus-4-5-20251101
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000005
+      output_cost_per_token: 0.000025
+  - model_name: anthropic/claude-sonnet-5-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+  - model_name: anthropic/claude-sonnet-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000002
+      output_cost_per_token: 0.00001
+  - model_name: anthropic/claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000003
+      output_cost_per_token: 0.000015
+  - model_name: anthropic/claude-sonnet-4-5-20250929
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000003
+      output_cost_per_token: 0.000015
+  - model_name: anthropic/claude-haiku-5-5
+    litellm_params:
+      model: anthropic/claude-haiku-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+  - model_name: anthropic/claude-haiku-4-5-20251001
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-workspace-id: wrkspc_EXAMPLE
+      input_cost_per_token: 0.000001
+      output_cost_per_token: 0.000005
+
   # Claude Code aliases → Local LLM (Qwen3)
   - model_name: claude-sonnet-4-20250514
     litellm_params:
