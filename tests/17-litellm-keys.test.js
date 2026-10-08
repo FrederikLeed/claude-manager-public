@@ -51,3 +51,19 @@ describe('paid Anthropic routes stay out of instance keys', () => {
     }
   });
 });
+
+describe('GitHub Copilot routes', () => {
+  it('every copilot/* route has a stand-in price and the token never sits in the image', () => {
+    const cfg = read('litellm/config.yaml');
+    const blocks = cfg.split(/\n(?=  - model_name: )/).filter((b) => b.includes('model_name: copilot/'));
+    assert.ok(blocks.length >= 10, `copilot routes: ${blocks.length}`);
+    for (const b of blocks) {
+      assert.match(b, /model: github_copilot\//);
+      assert.match(b, /input_cost_per_token: 0\.0+[1-9]/);
+    }
+    assert.doesNotMatch(cfg, /apento|LEGO/i, 'no org names in a file that goes public');
+    const ep = read('litellm/copilot-entrypoint.sh');
+    assert.match(ep, /umask 077/);
+    assert.match(read('docker-compose.yml'), /tmpfs:\n\s+- \/run\/gh-copilot:mode=0700/);
+  });
+});
