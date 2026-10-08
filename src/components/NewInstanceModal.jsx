@@ -7,13 +7,18 @@ const POLICY_OPTIONS = [
   { value: 'claude-full-dev', label: 'Claude + GitHub + npm/PyPI/Cargo', badge: null },
 ];
 
-const LLM_OPTIONS = [
-  { value: 'claude-max', label: 'Claude Max (Anthropic)', badge: null },
-  { value: 'local-llm', label: 'Local LLM (Qwen3 30B)', badge: 'GPU' },
-  { value: 'foundry', label: 'Azure AI Foundry (GPT-4.1-mini)', badge: null },
-  { value: 'foundry-latest', label: 'Azure AI Foundry (GPT Latest)', badge: null },
-  { value: 'github-copilot', label: 'GitHub Copilot CLI (GPT, Claude, Gemini)', badge: null },
-];
+// Shown while /api/llm/backends loads, or if it fails.
+const FALLBACK_BACKENDS = [{ id: 'claude-max', label: 'Claude Max', agent: 'claude', models: [], available: true }];
+
+const BACKEND_HINT = {
+  'claude-max': 'Claude Code on your Claude Max login.',
+  'local-llm': 'Claude Code on the local Qwen3 (RTX 3090) via LiteLLM. Free.',
+  'anthropic-api': 'Claude Code on the Anthropic API credit. The instance gets its own key with a small budget.',
+  ghcopilot: 'Claude Code on a GitHub Copilot model via LiteLLM (Copilot AI credits).',
+  'github-copilot': "GitHub's own Copilot CLI instead of Claude Code. Needs an unrestricted, claude-github or claude-full-dev policy.",
+  foundry: 'Azure AI Foundry. The resource is retired; this backend no longer answers.',
+  'foundry-latest': 'Azure AI Foundry. The resource is retired; this backend no longer answers.',
+};
 
 const EXPIRY_OPTIONS = [
   { value: 24, label: '24 hours' },
@@ -30,6 +35,8 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
   const [dockerSocket, setDockerSocket] = useState(false);
   const [networkPolicy, setNetworkPolicy] = useState('unrestricted');
   const [llmBackend, setLlmBackend] = useState('claude-max');
+  const [llmModel, setLlmModel] = useState('');
+  const [backends, setBackends] = useState(FALLBACK_BACKENDS);
   const [expiryHours, setExpiryHours] = useState(24);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -49,6 +56,22 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
       .catch(() => setHosts([]));
   }, []);
 
+  useEffect(() => {
+    fetch('/api/llm/backends')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (Array.isArray(d) && d.length) setBackends(d); })
+      .catch(() => {});
+  }, []);
+
+  const backend = backends.find((b) => b.id === llmBackend) || backends[0];
+  // Claude Max has nothing to pick; every other backend lists its models.
+  const modelChoices = backend?.models || [];
+  const chooseBackend = (id) => {
+    setLlmBackend(id);
+    const b = backends.find((x) => x.id === id);
+    setLlmModel(b?.defaultModel || (id === 'github-copilot' && b?.models?.[0]) || '');
+  };
+
   const needsExpiry = dockerSocket || networkPolicy === 'unrestricted';
 
   const handleSubmit = async (e) => {
@@ -66,6 +89,7 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
         llmBackend,
         hostId,
       };
+      if (llmModel && modelChoices.includes(llmModel)) opts.llmModel = llmModel;
       if (needsExpiry && expiryHours > 0) {
         opts.expiryHours = expiryHours;
       }
@@ -163,27 +187,30 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
           <div>
             <label className="block text-sm text-gray-400 mb-1">LLM backend</label>
             <select
+              id="llm-backend"
               value={llmBackend}
-              onChange={(e) => setLlmBackend(e.target.value)}
+              onChange={(e) => chooseBackend(e.target.value)}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 text-sm focus:outline-none focus:border-blue-500"
             >
-              {LLM_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value} disabled={opt.badge === 'Coming soon'}>
-                  {opt.label}{opt.badge ? ` [${opt.badge}]` : ''}
+              {backends.map((b) => (
+                <option key={b.id} value={b.id} disabled={!b.available}>
+                  {b.label}{b.paid ? ' [paid credit]' : ''}{!b.available ? ' [unavailable]' : ''}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {llmBackend === 'claude-max'
-                ? 'Uses Anthropic API directly. Requires claude login in container.'
-                : llmBackend === 'local-llm'
-                ? 'Routes through LiteLLM to local Ollama. No login needed.'
-                : llmBackend === 'foundry'
-                ? 'Routes through LiteLLM to Azure AI Foundry (GPT-4.1-mini).'
-                : llmBackend === 'github-copilot'
-                ? 'Starts GitHub Copilot CLI instead of Claude Code; pick the model with /model. Token from 1Password. Needs an unrestricted, claude-github or claude-full-dev policy.'
-                : 'Routes through LiteLLM to Azure AI Foundry (GPT Latest).'}
-            </p>
+            {modelChoices.length > 0 && (
+              <select
+                id="llm-model"
+                aria-label="Model"
+                value={llmModel}
+                onChange={(e) => setLlmModel(e.target.value)}
+                className="mt-2 w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 text-sm font-mono focus:outline-none focus:border-blue-500"
+              >
+                {llmBackend === 'github-copilot' && <option value="">Copilot default</option>}
+                {modelChoices.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+            <p className="text-xs text-gray-500 mt-1">{BACKEND_HINT[llmBackend] || ''}</p>
           </div>
 
           <div className="flex flex-col gap-2">

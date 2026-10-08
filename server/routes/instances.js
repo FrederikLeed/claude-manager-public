@@ -36,7 +36,8 @@ import { hashToken } from '../auth.js';
 import { getCurrentImageVersion } from '../workspace-image.js';
 import { getAllScanSummaries } from '../security-scan.js';
 import { createGrantsForInstance } from '../grants.js';
-import { isAvailable as litellmAvailable, createVirtualKey, deleteVirtualKey } from '../litellm.js';
+import { isAvailable as litellmAvailable, deleteVirtualKey } from '../litellm.js';
+import { BACKEND_IDS } from '../llm-routing.js';
 import { writeContainerACL, removeContainerACL, syncAllACLs } from '../proxy.js';
 
 const connectedClients = new Set();
@@ -116,14 +117,16 @@ export default async function instanceRoutes(fastify) {
           autoStart: { type: 'boolean', default: true },
           dockerSocket: { type: 'boolean', default: false },
           networkPolicy: { type: 'string', enum: NETWORK_POLICIES, default: 'unrestricted' },
-          llmBackend: { type: 'string', enum: ['claude-max', 'local-llm', 'foundry', 'foundry-latest', 'github-copilot'], default: 'claude-max' },
+          llmBackend: { type: 'string', enum: BACKEND_IDS, default: 'claude-max' },
+          llmModel: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9._/-]+$' },
+          autostartAgent: { type: 'boolean', default: true },
           expiryHours: { type: 'number', minimum: 0 },
           hostId: { type: 'string', minLength: 1, maxLength: 32 },
         },
       },
     },
   }, async (request, reply) => {
-    const { name, image, notes, tags, autoStart, dockerSocket, networkPolicy, llmBackend, expiryHours, hostId } = request.body;
+    const { name, image, notes, tags, autoStart, dockerSocket, networkPolicy, llmBackend, llmModel, autostartAgent, expiryHours, hostId } = request.body;
 
     let instance;
     try {
@@ -131,6 +134,8 @@ export default async function instanceRoutes(fastify) {
         name, image, autoStart, dockerSocket,
         networkPolicy: networkPolicy || 'unrestricted',
         llmBackend: llmBackend || 'claude-max',
+        llmModel: llmModel || null,
+        autostartAgent: autostartAgent !== false,
         hostId: hostId || DEFAULT_HOST_ID,
       });
     } catch (err) {
@@ -156,18 +161,11 @@ export default async function instanceRoutes(fastify) {
     // Create capability grants for high-risk capabilities
     createGrantsForInstance(instance.id, { dockerSocket, networkPolicy, expiryHours });
 
-    // Create LiteLLM virtual key if available
-    if (litellmAvailable()) {
-      try {
-        const keyResult = await createVirtualKey(instance.id, name);
-        if (keyResult?.key) {
-          const { setLiteLLMKey } = await import('../db.js');
-          setLiteLLMKey(instance.id, keyResult.key);
-        }
-      } catch (err) {
-        // LiteLLM key creation is non-fatal
-        fastify.log.warn({ err: err.message }, 'Failed to create LiteLLM key');
-      }
+    // The instance's own LiteLLM key (minted inside createInstance, already in
+    // its env) is kept so removal can revoke it and recreate can re-inject it.
+    if (instance.litellmKey) {
+      const { setLiteLLMKey } = await import('../db.js');
+      setLiteLLMKey(instance.id, instance.litellmKey);
     }
 
     // Write proxy ACL for this container
@@ -182,7 +180,10 @@ export default async function instanceRoutes(fastify) {
     logActivity('created', instance.id, name, `Image: ${instance.image}, Policy: ${networkPolicy || 'unrestricted'}, LLM: ${llmBackend || 'claude-max'}`);
 
     reply.code(201);
-    return { ...instance, name, notes, tags: tags || [] };
+    // The LiteLLM key is in the instance's env and the DB; it never goes back
+    // to the browser.
+    const { litellmKey: _key, ...shown } = instance;
+    return { ...shown, name, notes, tags: tags || [] };
   });
 
   // Get single instance

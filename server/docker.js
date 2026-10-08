@@ -6,7 +6,9 @@ import crypto from 'crypto';
 import { chownSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { config } from './config.js';
-import { getAllInstances, getInstance, getHosts, getHost, DEFAULT_HOST_ID } from './db.js';
+import { BACKENDS, isRouted, listRoutes, resolveModel, mintInstanceKey, litellmUrlFor, modelEnv, MODEL_ENV_PREFIXES } from './llm-routing.js';
+import { deleteVirtualKey } from './litellm.js';
+import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKey, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 import { moduleLogger } from './logger.js';
 
@@ -314,13 +316,16 @@ export async function getContainer(id) {
 /**
  * Create a new managed container instance.
  */
-export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max', hostId = DEFAULT_HOST_ID }) {
+export async function createInstance({ name, image, env = [], autoStart = false, dockerSocket = false, networkPolicy = 'unrestricted', llmBackend = 'claude-max', llmModel = null, autostartAgent = true, hostId = DEFAULT_HOST_ID }) {
   // Everything below runs against the chosen host's daemon, and every host path
   // in the spec has to exist THERE — binds are resolved by the daemon, not here.
   assertBackendFitsPolicy(llmBackend, networkPolicy);
-  // Resolve before anything is created, so a missing key leaves nothing behind.
-  if (llmBackend && !NON_LITELLM_BACKENDS.has(llmBackend) && config.LITELLM_API_BASE) backendKeyFor(llmBackend);
+  // Validate everything that can fail before anything is created.
+  const routed = isRouted(llmBackend) && !!config.LITELLM_API_BASE;
+  const routes = routed ? await listRoutes() : null;
+  const model = await resolveModel(llmBackend, llmModel, { routes });
   const host = await admit({ hostId, dockerSocket, networkPolicy });
+  const litellmUrl = routed ? litellmUrlFor(host) : null;
   const docker = await dockerFor(host.id);
   const paths = hostPaths(host);
   const isLocal = host.kind === 'local';
@@ -478,9 +483,15 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   if (llmBackend === 'github-copilot') {
     containerEnv.push(`CM_COPILOT_TOKEN_REF=${config.COPILOT_TOKEN_REF}`);
   }
-  if (llmBackend && !NON_LITELLM_BACKENDS.has(llmBackend) && config.LITELLM_API_BASE) {
-    containerEnv.push(`ANTHROPIC_BASE_URL=${config.LITELLM_API_BASE}`);
-    containerEnv.push(`ANTHROPIC_API_KEY=${backendKeyFor(llmBackend)}`);
+  if (llmBackend === 'github-copilot' && model) containerEnv.push(`CM_COPILOT_MODEL=${model}`);
+  if (!autostartAgent) containerEnv.push('CM_AUTOSTART_CLAUDE=0');
+  // LiteLLM-routed: this instance's own key, scoped to its backend's routes and
+  // budgeted. Minted last, right before the container exists, and revoked if
+  // the container cannot be created.
+  let litellmKey = null;
+  if (routed) {
+    litellmKey = await mintInstanceKey({ instanceId: id, name, backend: llmBackend, routes });
+    containerEnv.push(`ANTHROPIC_BASE_URL=${litellmUrl}`, `ANTHROPIC_API_KEY=${litellmKey}`, ...modelEnv(model));
   }
 
   // Create the container
@@ -509,6 +520,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
         [LABELS.NAME]: name,
         [LABELS.NETWORK_POLICY]: networkPolicy || 'unrestricted',
         [LABELS.LLM_BACKEND]: llmBackend || 'claude-max',
+        ...(model ? { [LABELS.LLM_MODEL]: model } : {}),
       },
       Tty: true,
       OpenStdin: true,
@@ -516,6 +528,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     });
   } catch (err) {
     log.error({ err, containerName }, 'failed to create container');
+    if (litellmKey) await deleteVirtualKey(litellmKey).catch(() => {});
     const error = new Error(`Failed to create container: ${err.message}`);
     error.statusCode = err.statusCode || 500;
     throw error;
@@ -533,7 +546,7 @@ export async function createInstance({ name, image, env = [], autoStart = false,
 
   const inspect = await container.inspect();
   // The caller persists only the hash; the raw token lives in the container env.
-  return { ...formatInspectInfo(inspect), eventToken };
+  return { ...formatInspectInfo(inspect), eventToken, litellmKey };
 }
 
 /**
@@ -866,14 +879,16 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   // existed carry the master key, which reaches the paid anthropic/* routes.
   // Fail closed: whatever the label or config says, a master key never survives.
   const routedBackend = oldLabels[LABELS.LLM_BACKEND];
-  const routed = routedBackend && !NON_LITELLM_BACKENDS.has(routedBackend) && config.LITELLM_API_BASE;
-  const k = routed ? backendKeyFor(routedBackend) : null;   // throws before anything is stopped
+  const routed = routedBackend && isRouted(routedBackend) && config.LITELLM_API_BASE;
+  // The instance's own key when it has one, else the legacy per-backend key.
+  const k = routed ? (getLiteLLMKey(instanceId) || backendKeyFor(routedBackend)) : null;   // throws before anything is stopped
+  const url = routed ? litellmUrlFor(host) : null;
   for (let j = newEnv.length - 1; j >= 0; j--) {
     const e = newEnv[j];
     const isMaster = config.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=${config.LITELLM_MASTER_KEY}`;
-    if ((routed && e.startsWith('ANTHROPIC_API_KEY=')) || isMaster) newEnv.splice(j, 1);
+    if ((routed && (e.startsWith('ANTHROPIC_API_KEY=') || e.startsWith('ANTHROPIC_BASE_URL='))) || isMaster) newEnv.splice(j, 1);
   }
-  if (k) newEnv.push(`ANTHROPIC_API_KEY=${k}`);
+  if (k) newEnv.push(`ANTHROPIC_API_KEY=${k}`, `ANTHROPIC_BASE_URL=${url}`);
 
   if (newNetworkPolicy && newNetworkPolicy !== 'unrestricted') {
     newEnv.push(
@@ -884,8 +899,16 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     );
   }
 
+  // Pin the model: the instance's own, else its backend's default. Instances
+  // created before models were pinned pick one up here.
+  const pinned = routed ? (oldLabels[LABELS.LLM_MODEL] || BACKENDS[routedBackend]?.defaultModel || null) : null;
+  if (pinned) {
+    for (let j = newEnv.length - 1; j >= 0; j--) if (MODEL_ENV_PREFIXES.some((pfx) => newEnv[j].startsWith(pfx))) newEnv.splice(j, 1);
+    newEnv.push(...modelEnv(pinned));
+  }
+
   // Update labels
-  const newLabels = { ...oldLabels, [LABELS.NETWORK_POLICY]: newNetworkPolicy };
+  const newLabels = { ...oldLabels, [LABELS.NETWORK_POLICY]: newNetworkPolicy, ...(pinned ? { [LABELS.LLM_MODEL]: pinned } : {}) };
 
   log.info({ instanceId: id, container: oldName, image: newImage, networkPolicy: newNetworkPolicy, updateImage }, 'recreating instance');
 
@@ -1039,6 +1062,7 @@ function formatContainerInfo(container) {
     dockerSocket: hasDockerSocket(container.Mounts),
     networkPolicy: labels[LABELS.NETWORK_POLICY] || 'unrestricted',
     llmBackend: labels[LABELS.LLM_BACKEND] || 'claude-max',
+    llmModel: labels[LABELS.LLM_MODEL] || null,
   };
 }
 
@@ -1062,6 +1086,7 @@ function formatInspectInfo(inspect) {
     dockerSocket: hasDockerSocket(inspect.Mounts),
     networkPolicy: labels[LABELS.NETWORK_POLICY] || 'unrestricted',
     llmBackend: labels[LABELS.LLM_BACKEND] || 'claude-max',
+    llmModel: labels[LABELS.LLM_MODEL] || null,
   };
 }
 

@@ -237,6 +237,16 @@ Each instance picks one of:
 | `foundry` | Azure AI Foundry `gpt-4.1-mini-1` via LiteLLM | `AZURE_AI_API_KEY` |
 | `foundry-latest` | Azure AI Foundry `gpt-chat-latest` via LiteLLM | `GPTLATEST_AZURE_AI_API_KEY` |
 | `github-copilot` | GitHub Copilot CLI (`copilot`) instead of Claude Code; GPT, Claude and Gemini models via `/model` or `--model` | `COPILOT_TOKEN_REF` (op:// reference, resolved inside the instance) |
+| `anthropic-api` | Claude Code on the Anthropic API credit via LiteLLM; pick any `anthropic/*` model | instance key, `LITELLM_PAID_BUDGET` (default $1) |
+| `ghcopilot` | Claude Code on a GitHub Copilot model via LiteLLM; pick any `ghcopilot/*` model | instance key, `LITELLM_DEFAULT_BUDGET` |
+
+**Model choice and keys.** Every LiteLLM-routed instance pins one model (`llmModel` on create,
+the second dropdown in the New Instance dialog; Local LLM pins `qwen3-30b-a3b`) and gets its *own*
+LiteLLM key, scoped to its backend's routes and budgeted (`$1` for the paid Anthropic credit by
+default). Claude Code is pinned through `ANTHROPIC_MODEL` and the default-model variables, so
+subagents and background calls use the same route. Instances on another host reach the router
+at `LITELLM_LAN_URL`; host-a's DOCKER-USER rules admit those hosts on :4000 only
+(`--llm-clients` in `scripts/host-harden.sh`). The key is revoked when the instance is removed.
 
 LiteLLM also serves every model of the Anthropic API workspace as `anthropic/<model id>`
 (e.g. `anthropic/claude-opus-5-5`, `anthropic/claude-fable-5-1`), with the key in

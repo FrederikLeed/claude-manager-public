@@ -24,6 +24,7 @@ export const LABELS = {
   NAME: 'claude-manager.name',
   NETWORK_POLICY: 'claude-manager.network-policy',
   LLM_BACKEND: 'claude-manager.llm-backend',
+  LLM_MODEL: 'claude-manager.llm-model',
 };
 
 export const CONTAINER_PREFIX = 'cm-instance-';

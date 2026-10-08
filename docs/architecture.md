@@ -219,6 +219,8 @@ Each instance picks one of:
 | `foundry`        | Azure AI Foundry — deployment `gpt-4.1-mini-1`.               |
 | `foundry-latest` | Azure AI Foundry — deployment `gpt-chat-latest`.              |
 | `github-copilot` | GitHub's `copilot` CLI, started by cm-autostart instead of Claude Code. Not routed through LiteLLM; the image's `/usr/local/bin/copilot` wrapper resolves `CM_COPILOT_TOKEN_REF` from 1Password at run time. Refused (`policy_blocks_backend`) on policies without `.githubcopilot.com`. |
+| `anthropic-api` | Claude Code via LiteLLM on an `anthropic/*` route (Anthropic API credit). Per-instance key, `LITELLM_PAID_BUDGET`. |
+| `ghcopilot` | Claude Code via LiteLLM on a `ghcopilot/*` route (GitHub Copilot seat). Per-instance key. |
 
 For any non-`claude-max` backend, the manager:
 
@@ -821,3 +823,16 @@ claude-manager/
     ├── roadmap.md
     └── diagrams/               .dot · .puml · .mmd · .py · .md sources + PNGs
 ```
+
+
+### Fleet model map
+
+The Fleet view opens on a *model map* (`src/components/FleetMap.jsx`, layout in
+`src/lib/fleet-map.js`, a pure function tested by `tests/18-fleet-map.test.js`):
+one band per host, one lane per backend, one tile per instance (circle = open
+network, square = behind the allowlist proxy; hollow = stopped; amber ring =
+waiting for input). Ribbons sized by instance count run from each lane through
+the LiteLLM router, or straight past it for Claude Max and the Copilot CLI, to
+the provider that answers. Hovering a tile traces its path; clicking opens its
+detail with an *Open terminal* button. The previous egress-graded network graph
+is one toggle away.

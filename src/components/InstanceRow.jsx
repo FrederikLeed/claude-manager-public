@@ -102,9 +102,11 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
             {instance.llmBackend && instance.llmBackend !== 'claude-max' && (
               <span
                 className="text-[10px] border rounded px-1 py-0.5 shrink-0 hidden sm:block text-purple-400 border-purple-800"
-                title={`LLM: ${instance.llmBackend}`}
+                title={`LLM: ${instance.llmBackend}${instance.llmModel ? ` · ${instance.llmModel}` : ''}`}
               >
-                {instance.llmBackend === 'local-llm' ? 'Local LLM' : instance.llmBackend === 'foundry' ? 'GPT-4.1-mini' : instance.llmBackend === 'foundry-latest' ? 'GPT Latest' : instance.llmBackend === 'github-copilot' ? 'Copilot' : instance.llmBackend}
+                {instance.llmModel
+                  ? instance.llmModel.replace(/^(anthropic|ghcopilot)\//, '').replace(/^claude-/, '')
+                  : instance.llmBackend === 'local-llm' ? 'Local LLM' : instance.llmBackend === 'foundry' ? 'GPT-4.1-mini' : instance.llmBackend === 'foundry-latest' ? 'GPT Latest' : instance.llmBackend === 'github-copilot' ? 'Copilot' : instance.llmBackend}
               </span>
             )}
             {instance.grants?.filter((g) => g.active).map((grant) => (

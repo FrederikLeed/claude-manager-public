@@ -301,3 +301,12 @@ describe('host SSH keys live only in the fleet vault', () => {
     assert.match(body, /assertFleetKeyRef\(ref\)/);
   });
 });
+
+describe('remote helper containers', () => {
+  it('are removed explicitly after the wait, not with AutoRemove (race under load)', () => {
+    const src = readFileSync(new URL('../server/host-fs.js', import.meta.url), 'utf8');
+    const fn = src.slice(src.indexOf('export async function runOnHost'));
+    assert.doesNotMatch(fn.slice(0, fn.indexOf('\n}\n')), /AutoRemove: true/);
+    assert.match(fn, /container\?\.remove\(\{ force: true \}\)/);
+  });
+});

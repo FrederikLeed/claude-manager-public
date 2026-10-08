@@ -1,5 +1,6 @@
 import { isAvailable, getModelList, getKeyInfo, rotateVirtualKey, getHealth } from '../litellm.js';
 import { getLiteLLMKey, setLiteLLMKey, clearLiteLLMKey, getInstance } from '../db.js';
+import { BACKENDS, listRoutes, routesForBackend } from '../llm-routing.js';
 
 export default async function litellmRoutes(fastify) {
   // LiteLLM availability
@@ -13,6 +14,22 @@ export default async function litellmRoutes(fastify) {
   fastify.get('/api/litellm/models', async () => {
     if (!isAvailable()) return [];
     return getModelList();
+  });
+
+  // Backends and the models each one can pin, for the New Instance dialog.
+  fastify.get('/api/llm/backends', async () => {
+    const routes = isAvailable() ? await listRoutes().catch(() => []) : [];
+    const copilotModels = routes.filter((r) => r.startsWith('ghcopilot/')).map((r) => r.slice('ghcopilot/'.length));
+    return Object.entries(BACKENDS).map(([id, b]) => ({
+      id,
+      label: b.label,
+      agent: b.agent,
+      paid: !!b.paid,
+      routed: !!b.routed,
+      defaultModel: b.defaultModel || null,
+      models: b.cliModels ? copilotModels : routesForBackend(id, routes),
+      available: !b.retired && (!b.routed || routesForBackend(id, routes).length > 0),
+    }));
   });
 
   // Instance LiteLLM key info + spend

@@ -26,17 +26,22 @@ describe('paid Anthropic routes stay out of instance keys', () => {
     assert.doesNotMatch(src, /backendKeys\[llmBackend\] \|\| config\.LITELLM_MASTER_KEY/);
     assert.doesNotMatch(src, /push\(`ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
     assert.match(src, /err\.code = 'backend_key_missing'/);
-    // checked before admit(), i.e. before any volume or container exists
+    // the model is validated before anything exists; the instance's own key is
+    // minted just before the container and revoked if the container fails
     const create = src.slice(src.indexOf('export async function createInstance'));
-    assert.ok(create.indexOf('backendKeyFor(llmBackend)') < create.indexOf('createVolume'));
-    // recreate swaps an old master key for the backend key
+    assert.ok(create.indexOf('resolveModel(') < create.indexOf('createVolume'));
+    assert.ok(create.indexOf('mintInstanceKey(') < create.indexOf('createContainer('));
+    assert.match(create, /if \(litellmKey\) await deleteVirtualKey\(litellmKey\)/);
+    // recreate prefers the instance's own key, falling back to the backend key
     const re = src.slice(src.indexOf('export async function recreateInstance'));
     const body = re.slice(0, re.indexOf('\nexport '));
-    assert.match(body, /backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
+    assert.match(body, /getLiteLLMKey\(instanceId\) \|\| backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
     // a master key is dropped even when the backend is not routed (fail closed)
     assert.match(body, /isMaster = config\.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
     // and the swap happens before the old container is stopped
     assert.ok(body.indexOf('backendKeyFor(routedBackend)') < body.indexOf('container.stop('));
+    // the API response never carries the instance's key
+    assert.match(read('server/routes/instances.js'), /const \{ litellmKey: _key, \.\.\.shown \} = instance;/);
   });
 
   it('every anthropic/* route has a price, so budgets count it', () => {
@@ -65,5 +70,37 @@ describe('GitHub Copilot routes', () => {
     const ep = read('litellm/copilot-entrypoint.sh');
     assert.match(ep, /umask 077/);
     assert.match(read('docker-compose.yml'), /tmpfs:\n\s+- \/run\/gh-copilot:mode=0700/);
+  });
+});
+
+describe('per-backend routing', async () => {
+  const r = await import('../server/llm-routing.js');
+  const ROUTES = ['anthropic/claude-opus-5-5', 'anthropic/claude-fable-5-1', 'ghcopilot/gpt-6.1-sol', 'ghcopilot/claude-sonnet-5.5',
+    'qwen3-30b-a3b', 'claude-opus-4-8', 'lab-gemma3', 'gpt-4.1-mini'];
+  it('each backend scopes to its own routes; paid routes only for anthropic-api', () => {
+    assert.deepEqual(r.routesForBackend('anthropic-api', ROUTES), ['anthropic/claude-opus-5-5', 'anthropic/claude-fable-5-1']);
+    assert.deepEqual(r.routesForBackend('ghcopilot', ROUTES), ['ghcopilot/gpt-6.1-sol', 'ghcopilot/claude-sonnet-5.5']);
+    assert.deepEqual(r.routesForBackend('local-llm', ROUTES), ['qwen3-30b-a3b', 'claude-opus-4-8']);
+    for (const b of ['local-llm', 'ghcopilot', 'foundry', 'foundry-latest']) {
+      assert.ok(!r.routesForBackend(b, ROUTES).some((m) => m.startsWith('anthropic/')), b);
+    }
+    assert.deepEqual(r.routesForBackend('claude-max', ROUTES), []);
+  });
+  it('a model must belong to its backend', async () => {
+    assert.equal(await r.resolveModel('anthropic-api', 'anthropic/claude-fable-5-1', { routes: ROUTES }), 'anthropic/claude-fable-5-1');
+    assert.equal(await r.resolveModel('anthropic-api', null, { routes: ROUTES }), 'anthropic/claude-opus-5-5');
+    await assert.rejects(r.resolveModel('ghcopilot', 'anthropic/claude-opus-5-5', { routes: ROUTES }), (e) => e.code === 'model_not_on_backend');
+    await assert.rejects(r.resolveModel('claude-max', 'anything', { routes: ROUTES }), (e) => e.code === 'model_not_selectable');
+    assert.equal(await r.resolveModel('github-copilot', 'gpt-6.1-sol', { routes: ROUTES }), 'gpt-6.1-sol');
+    await assert.rejects(r.resolveModel('github-copilot', 'x; rm -rf /', { routes: ROUTES }), (e) => e.code === 'bad_model');
+  });
+  it('model env pins every kind of Claude Code request', () => {
+    const env = r.modelEnv('ghcopilot/gpt-6.1-sol');
+    for (const k of ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL']) {
+      assert.ok(env.includes(`${k}=ghcopilot/gpt-6.1-sol`), k);
+    }
+  });
+  it('remote hosts reach the router by its LAN URL, or refuse', () => {
+    assert.throws(() => r.litellmUrlFor({ id: 'ws', kind: 'ssh' }), (e) => e.code === 'host_cannot_reach_litellm');
   });
 });

@@ -169,7 +169,9 @@ export async function buildTopology() {
       // Everything that is not Foundry or the lab-gpu box is served by the
       // workstation's Ollama — including the claude-* aliases, which exist so
       // the local-llm backend can answer Anthropic model names.
-      const provider = id.startsWith('lab-gpu') ? 'lab-gpu (Ollama, dual 3090)'
+      const provider = id.startsWith('anthropic/') ? 'Anthropic API (paid credit)'
+        : id.startsWith('ghcopilot/') ? 'GitHub Copilot (enterprise seat)'
+        : id.startsWith('lab-gpu') ? 'lab-gpu (Ollama, dual 3090)'
         : id.startsWith('gpt') ? 'Azure AI Foundry'
         : 'workstation GPU (RTX 3090)';
       if (!providers.has(provider)) providers.set(provider, []);
@@ -182,7 +184,9 @@ export async function buildTopology() {
         detail: {
           models: ids,
           via: 'LiteLLM',
-          note: provider.includes('lab-gpu') ? 'a GPU box on the LAN; off most of the time'
+          note: provider.startsWith('Anthropic') ? 'Anthropic API, billed to the monthly credit'
+            : provider.startsWith('GitHub') ? 'GitHub Copilot models, billed in AI credits'
+            : provider.includes('lab-gpu') ? 'a GPU box on the LAN; off most of the time'
             : provider.includes('workstation') ? 'Ollama on the workstation RTX 3090, over the LAN'
             : 'cloud endpoint',
         },
@@ -236,6 +240,7 @@ export async function buildTopology() {
         policy,
         allowedHosts: policyByName.get(policy)?.allowedHosts?.length ?? null,
         backend,
+        model: c.llmModel || null,
         dockerSocket: !!c.dockerSocket,
         grants: grants.map((g) => ({ capability: g.capability_name, expires: g.expires_at })),
         contextTokens: use?.context_tokens ?? null,

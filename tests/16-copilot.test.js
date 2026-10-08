@@ -24,7 +24,8 @@ before(async () => {
 
 describe('github-copilot backend', () => {
   it('is an accepted backend in the create route', () => {
-    assert.match(read('server/routes/instances.js'), /enum: \[[^\]]*'github-copilot'[^\]]*\]/);
+    assert.match(read('server/routes/instances.js'), /llmBackend: \{ type: 'string', enum: BACKEND_IDS/);
+    assert.match(read('server/llm-routing.js'), /'github-copilot': \{\n\s+routed: false/);
   });
 
   it('never routes through LiteLLM and hands the instance only a vault reference', () => {

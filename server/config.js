@@ -76,4 +76,10 @@ export const config = Object.freeze({
   COPILOT_TOKEN_REF: process.env.COPILOT_TOKEN_REF || 'op://Claude/github-copilot/credential',
   LITELLM_MASTER_KEY: process.env.LITELLM_MASTER_KEY || '',
   LITELLM_DEFAULT_BUDGET: parseFloat(process.env.LITELLM_DEFAULT_BUDGET || '20'),
+  // Budget for an instance key that reaches paid routes (anthropic/*, billed to
+  // the Anthropic API credit). Kept small: many instances can share one credit.
+  LITELLM_PAID_BUDGET: parseFloat(process.env.LITELLM_PAID_BUDGET || '1'),
+  // The router as other fleet hosts reach it (e.g. http://<manager-host>:4000).
+  // Required before a remote host can run a LiteLLM-routed instance.
+  LITELLM_LAN_URL: process.env.LITELLM_LAN_URL || '',
 });

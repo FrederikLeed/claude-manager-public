@@ -102,9 +102,17 @@ export async function runOnHost(docker, host, script) {
   const sink = () => new Writable({
     write(chunk, _enc, cb) { out.push(chunk.toString()); cb(); },
   });
-  await docker.run(HELPER_IMAGE, ['sh', '-c', script], [sink(), sink()], {
-    HostConfig: { Binds: [`${host.data_root}:/root`], AutoRemove: true },
+  // No AutoRemove: docker.run() creates, starts and then *waits*. A helper
+  // that finishes before the wait call arrives (fast script, slow SSH round
+  // trip under load) was already deleted, and the wait failed the whole create
+  // with "no such container". Remove it ourselves once the wait has returned.
+  const [result, container] = await docker.run(HELPER_IMAGE, ['sh', '-c', script], [sink(), sink()], {
+    HostConfig: { Binds: [`${host.data_root}:/root`] },
   });
+  await container?.remove({ force: true }).catch(() => {});
+  if (result?.StatusCode) {
+    throw new Error(`helper on ${host.name || host.id} exited ${result.StatusCode}: ${out.join('').slice(-300)}`);
+  }
   return out.join('');
 }
 

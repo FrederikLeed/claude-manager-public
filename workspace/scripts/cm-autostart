@@ -14,6 +14,7 @@ set -uo pipefail
 # container is the sandbox. --continue picks up the last session after a restart.
 if [ "${CM_LLM_BACKEND:-}" = "github-copilot" ]; then
   cargs=(--allow-all-tools)
+  [ -n "${CM_COPILOT_MODEL:-}" ] && cargs+=(--model "$CM_COPILOT_MODEL")
   [ -d "$HOME/.copilot/session-state" ] && [ -n "$(ls -A "$HOME/.copilot/session-state" 2>/dev/null)" ] && cargs+=(--continue)
   cd /workspace && copilot "${cargs[@]}"
   exit
