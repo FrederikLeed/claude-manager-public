@@ -55,19 +55,6 @@ export async function deleteVirtualKey(key) {
   });
 }
 
-export async function rotateVirtualKey(oldKey, instanceId, instanceName) {
-  // Keep the old key's scope and budget: an anthropic-api instance's key reaches
-  // paid routes a freshly minted default key must not.
-  const info = (await getKeyInfo(oldKey))?.info;
-  const models = info?.models?.length ? info.models : null;
-  const fresh = models
-    ? await litellmFetch('/key/generate', { method: 'POST', body: {
-        key_alias: `cm-${instanceId}`, models, max_budget: info.max_budget ?? config.LITELLM_DEFAULT_BUDGET,
-        metadata: { ...(info.metadata || {}), instance_id: instanceId, instance_name: instanceName } } })
-    : await createVirtualKey(instanceId, instanceName);
-  await deleteVirtualKey(oldKey);
-  return fresh;
-}
 
 export async function getKeyInfo(key) {
   try {

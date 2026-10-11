@@ -422,9 +422,9 @@ export default async function instanceRoutes(fastify) {
     // Clean up LiteLLM key
     if (litellmAvailable()) {
       try {
-        const { getLiteLLMKey } = await import('../db.js');
-        const key = getLiteLLMKey(id);
-        if (key) await deleteVirtualKey(key);
+        const { getLiteLLMKeyHash } = await import('../db.js');
+        const keyHash = getLiteLLMKeyHash(id);
+        if (keyHash) await deleteVirtualKey(keyHash);
       } catch { /* best effort */ }
     }
 

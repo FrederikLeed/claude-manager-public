@@ -105,7 +105,7 @@ export default function InstanceRow({ instance, managed = true, onStart, onStop,
                 title={`LLM: ${instance.llmBackend}${instance.llmModel ? ` · ${instance.llmModel}` : ''}`}
               >
                 {instance.llmModel
-                  ? instance.llmModel.replace(/^(anthropic|ghcopilot)\//, '').replace(/^claude-/, '')
+                  ? `${instance.llmBackend === 'github-copilot' ? 'Copilot CLI · ' : ''}${instance.llmModel.replace(/^(anthropic|ghcopilot)\//, '').replace(/^claude-/, '')}`
                   : instance.llmBackend === 'local-llm' ? 'Local LLM' : instance.llmBackend === 'foundry' ? 'GPT-4.1-mini' : instance.llmBackend === 'foundry-latest' ? 'GPT Latest' : instance.llmBackend === 'github-copilot' ? 'Copilot' : instance.llmBackend}
               </span>
             )}

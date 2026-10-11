@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -184,6 +185,10 @@ export function initDb() {
   }
   if (!columns.some((c) => c.name === 'litellm_key')) {
     db.exec('ALTER TABLE instances ADD COLUMN litellm_key TEXT');
+  }
+  // Older managers stored raw LiteLLM keys here; keep only their hashes.
+  for (const r of db.prepare("SELECT id, litellm_key FROM instances WHERE litellm_key LIKE 'sk-%'").all()) {
+    db.prepare('UPDATE instances SET litellm_key = ? WHERE id = ?').run(hashKey(r.litellm_key), r.id);
   }
   // Claude Code version baked into the image this instance was (re)created from
   if (!columns.some((c) => c.name === 'claude_version')) {
@@ -462,11 +467,18 @@ export function getGrantById(id) {
 
 // --- LiteLLM key management ---
 
-export function setLiteLLMKey(instanceId, key) {
-  db.prepare('UPDATE instances SET litellm_key = ? WHERE id = ?').run(key, instanceId);
+// Only the key's hash is stored: it is what LiteLLM itself keys tokens by, it
+// is enough for every admin call (info, update, delete), and it cannot be used
+// to call a model. The raw key lives only in the instance's environment.
+export function hashKey(key) {
+  return crypto.createHash('sha256').update(String(key)).digest('hex');
 }
 
-export function getLiteLLMKey(instanceId) {
+export function setLiteLLMKey(instanceId, key) {
+  db.prepare('UPDATE instances SET litellm_key = ? WHERE id = ?').run(key ? hashKey(key) : null, instanceId);
+}
+
+export function getLiteLLMKeyHash(instanceId) {
   const row = db.prepare('SELECT litellm_key FROM instances WHERE id = ?').get(instanceId);
   return row?.litellm_key || null;
 }

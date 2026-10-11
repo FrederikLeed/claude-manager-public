@@ -1,5 +1,6 @@
-import { isAvailable, getModelList, getKeyInfo, rotateVirtualKey, getHealth } from '../litellm.js';
-import { getLiteLLMKey, setLiteLLMKey, clearLiteLLMKey, getInstance } from '../db.js';
+import { isAvailable, getModelList, getKeyInfo, getHealth, litellmFetch, deleteVirtualKey } from '../litellm.js';
+import { recreateInstance } from '../docker.js';
+import { getLiteLLMKeyHash, hashKey } from '../db.js';
 import { BACKENDS, listRoutes, routesForBackend } from '../llm-routing.js';
 
 export default async function litellmRoutes(fastify) {
@@ -39,39 +40,55 @@ export default async function litellmRoutes(fastify) {
       return { available: false };
     }
 
-    const key = getLiteLLMKey(id);
-    if (!key) {
+    const keyHash = getLiteLLMKeyHash(id);
+    if (!keyHash) {
       return { available: true, key: null };
     }
 
-    const info = await getKeyInfo(key);
+    const info = await getKeyInfo(keyHash);
     return {
       available: true,
-      key: key.slice(0, 8) + '...',
-      spend: info?.info?.spend || info?.spend || 0,
-      maxBudget: info?.info?.max_budget || info?.max_budget || null,
-      models: info?.info?.models || info?.models || [],
+      // The manager keeps only the hash; show the alias, never key material.
+      key: info?.info?.key_alias || `cm-${id}`,
+      spend: info?.info?.spend || 0,
+      maxBudget: info?.info?.max_budget || null,
+      models: info?.info?.models || [],
     };
   });
 
-  // Rotate instance key
-  fastify.post('/api/instances/:id/litellm/rotate', async (request) => {
+  // Rotate instance key: a replacement with the same scope, budget and spend so
+  // far goes into a recreated container; only then is the old key revoked. It
+  // used to change only the database, leaving the instance on a deleted key.
+  fastify.post('/api/instances/:id/litellm/rotate', async (request, reply) => {
     const { id } = request.params;
     if (!isAvailable()) {
       const err = new Error('LiteLLM not configured');
       err.statusCode = 503;
       throw err;
     }
+    const oldHash = getLiteLLMKeyHash(id);
+    if (!oldHash) return reply.code(409).send({ error: 'This instance has no LiteLLM key of its own', code: 'no_instance_key' });
+    const info = (await getKeyInfo(oldHash))?.info;
+    if (!info?.models?.length) return reply.code(409).send({ error: 'The current key has no model scope to copy', code: 'key_scope_unknown' });
 
-    const oldKey = getLiteLLMKey(id);
-    const dbData = getInstance(id);
-    const instanceName = dbData?.name || id;
-
-    const result = await rotateVirtualKey(oldKey, id, instanceName);
-    if (result?.key) {
-      setLiteLLMKey(id, result.key);
+    const fresh = await litellmFetch('/key/generate', {
+      method: 'POST',
+      body: {
+        key_alias: `cm-${id}-rotating`,
+        models: info.models,
+        max_budget: info.max_budget ?? null,
+        spend: info.spend || 0,
+        metadata: info.metadata || {},
+      },
+    });
+    try {
+      await recreateInstance(id, { litellmKey: fresh.key });
+    } catch (err) {
+      await deleteVirtualKey(fresh.key).catch(() => {});
+      throw err;
     }
-
-    return { ok: true, key: result?.key?.slice(0, 8) + '...' };
+    await deleteVirtualKey(oldHash).catch(() => {});
+    await litellmFetch('/key/update', { method: 'POST', body: { key: hashKey(fresh.key), key_alias: `cm-${id}` } }).catch(() => {});
+    return { ok: true, key: `cm-${id}` };
   });
 }

@@ -13,38 +13,40 @@ import { litellmFetch, getKeyInfo } from './litellm.js';
 
 export const BACKENDS = {
   'claude-max': {
-    routed: false, label: 'Claude Max', agent: 'claude',
+    routed: false, label: 'Claude Code · Claude Max', agent: 'claude',
   },
   'github-copilot': {
-    routed: false, label: 'GitHub Copilot CLI', agent: 'copilot',
+    routed: false, label: "Copilot CLI · GitHub's own agent", agent: 'copilot',
     // The CLI takes Copilot's own model ids; same seat as the ghcopilot/* routes.
     cliModels: true,
   },
   'local-llm': {
-    routed: true, label: 'Local LLM (RTX 3090)', agent: 'claude', paid: false,
-    // Qwen3 itself plus the Claude-named aliases Claude Code asks for by default.
-    match: (id) => !id.includes('/') && (id.startsWith('qwen') || id.startsWith('claude-')),
+    routed: true, label: 'Claude Code · Local Qwen3 (RTX 3090)', agent: 'claude', paid: false,
+    // Only Qwen3 itself. The Claude-named aliases on the router are all the
+    // same Qwen3 and exist for instances created before models were pinned;
+    // offering them would only suggest a choice that is not there.
+    match: (id) => !id.includes('/') && id.startsWith('qwen'),
     // Pinned: Claude Code's own default moves with every release (2.1.293 asks
     // for claude-opus-5-5, which no alias covers), so never rely on the aliases.
     defaultModel: 'qwen3-30b-a3b',
   },
   'anthropic-api': {
-    routed: true, label: 'Anthropic API', agent: 'claude', paid: true,
+    routed: true, label: 'Claude Code · Anthropic API', agent: 'claude', paid: true,
     match: (id) => id.startsWith('anthropic/'),
     defaultModel: 'anthropic/claude-opus-5-5',
   },
   ghcopilot: {
-    routed: true, label: 'GitHub Copilot via LiteLLM', agent: 'claude', paid: false,
+    routed: true, label: 'Claude Code · GitHub Copilot models', agent: 'claude', paid: false,
     match: (id) => id.startsWith('ghcopilot/'),
     defaultModel: 'ghcopilot/claude-sonnet-5.5',
   },
   // Legacy Azure routes; the resource behind them is gone.
   foundry: {
-    routed: true, label: 'Azure AI Foundry (GPT-4.1-mini)', agent: 'claude', paid: false,
+    routed: true, label: 'Claude Code · Azure Foundry GPT-4.1-mini', agent: 'claude', paid: false,
     match: (id) => id === 'gpt-4.1-mini', defaultModel: 'gpt-4.1-mini', retired: true,
   },
   'foundry-latest': {
-    routed: true, label: 'Azure AI Foundry (GPT Latest)', agent: 'claude', paid: false,
+    routed: true, label: 'Claude Code · Azure Foundry GPT latest', agent: 'claude', paid: false,
     match: (id) => id === 'gpt-chat-latest', defaultModel: 'gpt-chat-latest', retired: true,
   },
 };

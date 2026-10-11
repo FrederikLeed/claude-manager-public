@@ -8,7 +8,7 @@ import path from 'path';
 import { config } from './config.js';
 import { BACKENDS, isRouted, listRoutes, resolveModel, mintInstanceKey, scopeKeyToBackend, litellmUrlFor, modelEnv, MODEL_ENV_PREFIXES } from './llm-routing.js';
 import { deleteVirtualKey } from './litellm.js';
-import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKey, DEFAULT_HOST_ID } from './db.js';
+import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKeyHash, setLiteLLMKey, hashKey, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 import { moduleLogger } from './logger.js';
 
@@ -321,7 +321,8 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   // in the spec has to exist THERE — binds are resolved by the daemon, not here.
   assertBackendFitsPolicy(llmBackend, networkPolicy);
   // Validate everything that can fail before anything is created.
-  const routed = isRouted(llmBackend) && !!config.LITELLM_API_BASE;
+  assertRouterConfigured(llmBackend);
+  const routed = isRouted(llmBackend);
   const routes = routed ? await listRoutes() : null;
   const model = await resolveModel(llmBackend, llmModel, { routes });
   const host = await admit({ hostId, dockerSocket, networkPolicy });
@@ -365,9 +366,18 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     throw error;
   }
 
+  // From here on, every resource this create makes is registered for undo, so
+  // a failure part-way leaves nothing behind (a half-made create used to leave
+  // its workspace volume, and could leave a minted key).
+  const undo = [];
+  let container;
+  let litellmKey = null;
+  try {
+
   // Create the workspace volume
   try {
     await docker.createVolume({ Name: volumeName });
+    undo.push(() => docker.getVolume(volumeName).remove());
   } catch (err) {
     if (err.statusCode !== 409) { // 409 = volume already exists
       const error = new Error(`Failed to create volume "${volumeName}": ${err.message}`);
@@ -488,14 +498,13 @@ export async function createInstance({ name, image, env = [], autoStart = false,
   // LiteLLM-routed: this instance's own key, scoped to its backend's routes and
   // budgeted. Minted last, right before the container exists, and revoked if
   // the container cannot be created.
-  let litellmKey = null;
   if (routed) {
     litellmKey = await mintInstanceKey({ instanceId: id, name, backend: llmBackend, routes });
+    undo.push(() => deleteVirtualKey(litellmKey));
     containerEnv.push(`ANTHROPIC_BASE_URL=${litellmUrl}`, `ANTHROPIC_API_KEY=${litellmKey}`, ...modelEnv(model));
   }
 
   // Create the container
-  let container;
   try {
     const hostConfig = {
       Binds: binds,
@@ -528,10 +537,16 @@ export async function createInstance({ name, image, env = [], autoStart = false,
     });
   } catch (err) {
     log.error({ err, containerName }, 'failed to create container');
-    if (litellmKey) await deleteVirtualKey(litellmKey).catch(() => {});
     const error = new Error(`Failed to create container: ${err.message}`);
     error.statusCode = err.statusCode || 500;
     throw error;
+  }
+
+  } catch (err) {
+    for (const step of undo.reverse()) {
+      await step().catch((e) => log.warn({ err: e.message, containerName }, 'cleanup after failed create'));
+    }
+    throw err;
   }
 
   if (autoStart) {
@@ -813,7 +828,7 @@ export async function adoptContainer(dockerId, { name }) {
  * Preserves: image, env, labels, mounts, network, restart policy.
  * Returns the new container info.
  */
-export async function recreateInstance(id, { dockerSocket, networkPolicy, updateImage = false } = {}) {
+export async function recreateInstance(id, { dockerSocket, networkPolicy, updateImage = false, litellmKey = null } = {}) {
   // The replacement must be built on the host the instance lives on. This used
   // the module-level local client, so recreating a remote instance built the
   // new container on the manager's daemon, force-removed the remote original,
@@ -879,14 +894,31 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   // existed carry the master key, which reaches the paid anthropic/* routes.
   // Fail closed: whatever the label or config says, a master key never survives.
   const routedBackend = oldLabels[LABELS.LLM_BACKEND];
-  const routed = routedBackend && isRouted(routedBackend) && config.LITELLM_API_BASE;
-  // The instance's own key when it has one, else the legacy per-backend key.
-  const stored = routed ? getLiteLLMKey(instanceId) : null;
-  // A stored key is narrowed to this backend's routes before it is reused: keys
-  // minted before per-backend scoping reach every non-paid route. Both calls
-  // throw before anything is stopped.
-  if (stored) await scopeKeyToBackend(stored, routedBackend);
-  const k = routed ? (stored || backendKeyFor(routedBackend)) : null;
+  assertRouterConfigured(routedBackend);
+  const routed = !!routedBackend && isRouted(routedBackend);
+  // The key travels with the container; the database keeps only its hash. Reuse
+  // the old container's key when it is this instance's own (narrowed to its
+  // backend first: keys minted before per-backend scoping reach more), keep a
+  // legacy per-backend key as it is, and mint a fresh one when there is none.
+  // All of this happens before anything is stopped.
+  const envKey = ((oldConfig.Env || []).find((e) => e.startsWith('ANTHROPIC_API_KEY=')) || '').slice('ANTHROPIC_API_KEY='.length) || null;
+  const usableEnvKey = envKey && envKey !== config.LITELLM_MASTER_KEY ? envKey : null;
+  const storedHash = routed ? getLiteLLMKeyHash(instanceId) : null;
+  let k = null;
+  let mintedKey = null;
+  if (routed) {
+    if (litellmKey) {
+      k = litellmKey;                                        // rotation hands in a fresh key
+    } else if (usableEnvKey && storedHash && hashKey(usableEnvKey) === storedHash) {
+      await scopeKeyToBackend(storedHash, routedBackend);
+      k = usableEnvKey;
+    } else if (usableEnvKey && !storedHash) {
+      k = usableEnvKey;                                      // legacy shared backend key
+    } else {
+      mintedKey = await mintInstanceKey({ instanceId, name: oldLabels[LABELS.NAME] || instanceId, backend: routedBackend });
+      k = mintedKey;
+    }
+  }
   const url = routed ? litellmUrlFor(host) : null;
   for (let j = newEnv.length - 1; j >= 0; j--) {
     const e = newEnv[j];
@@ -960,8 +992,11 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
     if (newContainer) await newContainer.remove({ force: true }).catch(() => {});
     await container.rename({ name: oldName }).catch((e) => log.error({ err: e }, 'could not rename the previous container back'));
     if (wasRunning) await container.start().catch((e) => log.error({ err: e }, 'could not restart the previous container'));
+    if (mintedKey) await deleteVirtualKey(mintedKey).catch(() => {});
     throw err;
   }
+  // The new container holds a key this instance has not recorded yet: keep its hash.
+  if (mintedKey || litellmKey) setLiteLLMKey(instanceId, k);
   await container.remove({ force: true });
 
   const newInspect = await newContainer.inspect();
@@ -1118,6 +1153,15 @@ export function assertBackendFitsPolicy(llmBackend, networkPolicy, policies = li
  * to the backend's models; there is deliberately no master-key fallback, since
  * the master key reaches every route (anthropic/* included) with no budget.
  */
+/** A LiteLLM backend without a router would quietly fall back to the host's login. */
+export function assertRouterConfigured(llmBackend, routerBase = config.LITELLM_API_BASE) {
+  if (!llmBackend || !isRouted(llmBackend) || routerBase) return;
+  const err = new Error(`Backend "${llmBackend}" routes through LiteLLM, and LITELLM_API_BASE is not set on the manager`);
+  err.statusCode = 409;
+  err.code = 'litellm_not_configured';
+  throw err;
+}
+
 export function backendKeyFor(llmBackend) {
   const keys = {
     'local-llm': process.env.LITELLM_KEY_LOCAL_LLM,

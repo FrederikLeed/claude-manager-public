@@ -60,6 +60,11 @@ export function HostCard({ h }) {
         <div className="text-[11px]" style={{ color: C.muted, fontFamily: MONO }}>
           {n.detail?.kind === 'local' ? 'manager host · local socket' : `${n.detail?.address || ''} · over SSH`}
         </div>
+        {n.detail?.claudeLogin === false && (
+          <div className="text-[11px] rounded px-2 py-1" style={{ background: '#3a2a10', color: '#ffd38a' }} title="Claude Max instances on this host share its login">
+            Claude not logged in here
+          </div>
+        )}
         <div className="flex items-baseline gap-1.5">
           <span style={{ fontFamily: DISPLAY }} className="text-3xl font-extrabold tabular-nums leading-none">{h.running}</span>
           <span className="text-xs" style={{ color: C.muted }}>running of {h.count}</span>

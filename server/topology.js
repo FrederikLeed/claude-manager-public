@@ -14,6 +14,7 @@ import { getHealthReport } from './health.js';
 import { hostMetrics, instanceMetrics } from './metrics.js';
 import { getTrafficRates, getRecentDenials } from './proxy-log.js';
 import { getModelList, getHealth as litellmHealth, isAvailable as litellmAvailable } from './litellm.js';
+import { claudeLoginStatus, cachedClaudeLogin } from './claude-login.js';
 import { getImageStatus, getCurrentImageVersion } from './workspace-image.js';
 import { getAccessRequestsForInstance } from './db.js';
 
@@ -21,6 +22,9 @@ import { getAccessRequestsForInstance } from './db.js';
 const RESTRICTED = (policy) => policy && policy !== 'unrestricted';
 
 export async function buildTopology() {
+  // Learn each host's Claude login in the background; the map shows the last known state.
+  for (const h of getHosts()) claudeLoginStatus(h.id).catch(() => {});
+
   const nodes = [];
   const edges = [];
 
@@ -66,6 +70,7 @@ export async function buildTopology() {
       label: host.name || host.id,
       status: !host.enabled ? 'disabled' : reachable ? 'ok' : 'unreachable',
       detail: {
+        claudeLogin: cachedClaudeLogin(host.id),
         kind: host.kind,
         address: host.address || 'local socket',
         acceptsInstances: host.acceptsInstances,

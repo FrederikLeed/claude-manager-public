@@ -31,13 +31,15 @@ describe('paid Anthropic routes stay out of instance keys', () => {
     const create = src.slice(src.indexOf('export async function createInstance'));
     assert.ok(create.indexOf('resolveModel(') < create.indexOf('createVolume'));
     assert.ok(create.indexOf('mintInstanceKey(') < create.indexOf('createContainer('));
-    assert.match(create, /if \(litellmKey\) await deleteVirtualKey\(litellmKey\)/);
+    assert.match(create, /undo\.push\(\(\) => deleteVirtualKey\(litellmKey\)\)/);
     // recreate prefers the instance's own key, falling back to the backend key
     const re = src.slice(src.indexOf('export async function recreateInstance'));
     const body = re.slice(0, re.indexOf('\nexport '));
-    assert.match(body, /const stored = routed \? getLiteLLMKey\(instanceId\) : null;[\s\S]*stored \|\| backendKeyFor\(routedBackend\)[\s\S]*startsWith\('ANTHROPIC_API_KEY='\)/);
-    // a stored key is narrowed to its backend's routes before reuse, before the stop
-    assert.match(body, /if \(stored\) await scopeKeyToBackend\(stored, routedBackend\);/);
+    // the key comes from the old container (the DB holds only its hash), never the master key
+    assert.match(body, /const usableEnvKey = envKey && envKey !== config\.LITELLM_MASTER_KEY \? envKey : null;/);
+    assert.match(body, /hashKey\(usableEnvKey\) === storedHash/);
+    // a reused key is narrowed to its backend's routes, before the stop
+    assert.match(body, /await scopeKeyToBackend\(storedHash, routedBackend\);/);
     assert.ok(body.indexOf('scopeKeyToBackend(') < body.indexOf('container.stop('));
     // a master key is dropped even when the backend is not routed (fail closed)
     assert.match(body, /isMaster = config\.LITELLM_MASTER_KEY && e === `ANTHROPIC_API_KEY=\$\{config\.LITELLM_MASTER_KEY\}`/);
@@ -83,7 +85,8 @@ describe('per-backend routing', async () => {
   it('each backend scopes to its own routes; paid routes only for anthropic-api', () => {
     assert.deepEqual(r.routesForBackend('anthropic-api', ROUTES), ['anthropic/claude-opus-5-5', 'anthropic/claude-fable-5-1']);
     assert.deepEqual(r.routesForBackend('ghcopilot', ROUTES), ['ghcopilot/gpt-6.1-sol', 'ghcopilot/claude-sonnet-5.5']);
-    assert.deepEqual(r.routesForBackend('local-llm', ROUTES), ['qwen3-30b-a3b', 'claude-opus-4-8']);
+    // only Qwen3 itself: the Claude-named aliases are the same model under other names
+    assert.deepEqual(r.routesForBackend('local-llm', ROUTES), ['qwen3-30b-a3b']);
     for (const b of ['local-llm', 'ghcopilot', 'foundry', 'foundry-latest']) {
       assert.ok(!r.routesForBackend(b, ROUTES).some((m) => m.startsWith('anthropic/')), b);
     }

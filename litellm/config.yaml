@@ -147,6 +147,7 @@ model_list:
   # GitHub Copilot via LiteLLM's github_copilot provider (an enterprise seat,
   # usage billed in AI credits; owner-approved 2026-10-08). Copilot bills
   # credits, not tokens, so the prices below are stand-ins that keep budgets
+  # (cached prompt tokens at a tenth of the input price, as the providers bill them)
   # meaningful: Anthropic list rates for Claude, Sonnet 5.5 rates for the rest.
   # Org-private models the seat also lists are deliberately absent.
   # GPT models are served on the Responses API only.
@@ -154,36 +155,43 @@ model_list:
     litellm_params:
       model: github_copilot/claude-opus-5.5
       input_cost_per_token: 0.000004
+      cache_read_input_token_cost: 0.0000004
       output_cost_per_token: 0.00002
   - model_name: ghcopilot/claude-sonnet-5.5
     litellm_params:
       model: github_copilot/claude-sonnet-5.5
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
   - model_name: ghcopilot/claude-haiku-5.5
     litellm_params:
       model: github_copilot/claude-haiku-5.5
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
   - model_name: ghcopilot/claude-haiku-4.5
     litellm_params:
       model: github_copilot/claude-haiku-4.5
       input_cost_per_token: 0.000001
+      cache_read_input_token_cost: 0.0000001
       output_cost_per_token: 0.000005
   - model_name: ghcopilot/gemini-3.8-flash
     litellm_params:
       model: github_copilot/gemini-3.8-flash
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
   - model_name: ghcopilot/gemini-3.7-flash
     litellm_params:
       model: github_copilot/gemini-3.7-flash
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
   - model_name: ghcopilot/gpt-6.1-sol
     litellm_params:
       model: github_copilot/gpt-6.1-sol
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
     model_info:
       mode: responses
@@ -191,6 +199,7 @@ model_list:
     litellm_params:
       model: github_copilot/gpt-6-luna
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
     model_info:
       mode: responses
@@ -198,6 +207,7 @@ model_list:
     litellm_params:
       model: github_copilot/gpt-6-astra
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
     model_info:
       mode: responses
@@ -205,6 +215,7 @@ model_list:
     litellm_params:
       model: github_copilot/gpt-5.3-codex
       input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000002
       output_cost_per_token: 0.00001
     model_info:
       mode: responses

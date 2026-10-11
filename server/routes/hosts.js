@@ -12,6 +12,7 @@ import { dockerFor, invalidateHost, pingHost, FLEET_VAULT_PREFIX, isFleetKeyRef 
 import { runOnHost } from '../host-fs.js';
 import { stopHostEventStream, restartHostEventStream } from './instances.js';
 import { logActivity } from '../db.js';
+import { claudeLoginStatus, cachedClaudeLogin } from '../claude-login.js';
 
 const HOST_ID = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
@@ -25,6 +26,7 @@ function publicHost(host, counts = {}) {
     sshUser: host.ssh_user,
     sshPort: host.ssh_port,
     hasKey: !!host.ssh_key_ref,      // the reference itself is a map to the key; it stays server-side
+    claudeLogin: cachedClaudeLogin(host.id),   // last known; GET /api/hosts/:id/claude-login checks
     dataRoot: host.data_root,
     managerUrl: host.manager_url,
     network: host.network,
@@ -46,6 +48,12 @@ export default async function hostRoutes(fastify) {
       hosts.map((h) => [h.id, getInstancesByHost(h.id).length]),
     );
     return { hosts: hosts.map((h) => publicHost(h, counts)) };
+  });
+
+  // Whether Claude Code is logged in on this host (shared by its Claude Max instances).
+  fastify.get('/api/hosts/:id/claude-login', async (request, reply) => {
+    if (!getHost(request.params.id)) return reply.code(404).send({ error: 'Host not found' });
+    return claudeLoginStatus(request.params.id, { refresh: request.query?.refresh === '1' });
   });
 
   fastify.get('/api/hosts/:id', async (request, reply) => {

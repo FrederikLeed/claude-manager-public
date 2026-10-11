@@ -8,14 +8,14 @@ const POLICY_OPTIONS = [
 ];
 
 // Shown while /api/llm/backends loads, or if it fails.
-const FALLBACK_BACKENDS = [{ id: 'claude-max', label: 'Claude Max', agent: 'claude', models: [], available: true }];
+const FALLBACK_BACKENDS = [{ id: 'claude-max', label: 'Claude Code · Claude Max', agent: 'claude', models: [], available: true }];
 
 const BACKEND_HINT = {
-  'claude-max': 'Claude Code on your Claude Max login.',
-  'local-llm': 'Claude Code on the local Qwen3 (RTX 3090) via LiteLLM. Free.',
-  'anthropic-api': 'Claude Code on the Anthropic API credit. The instance gets its own key with a small budget.',
-  ghcopilot: 'Claude Code on a GitHub Copilot model via LiteLLM (Copilot AI credits).',
-  'github-copilot': "GitHub's own Copilot CLI instead of Claude Code. Needs an unrestricted, claude-github or claude-full-dev policy.",
+  'claude-max': 'Claude Code, signed in with your Claude Max subscription on that host.',
+  'local-llm': 'Claude Code running Qwen3 on the workstation GPU, via LiteLLM. Free, but weak at multi-step tool use.',
+  'anthropic-api': 'Claude Code on the Anthropic API credit, via LiteLLM. The instance gets its own key with a small budget.',
+  ghcopilot: "Claude Code (Anthropic's harness) running a GitHub Copilot model, via LiteLLM. Billed in Copilot AI credits.",
+  'github-copilot': "GitHub's own Copilot CLI instead of Claude Code, on your Copilot seat. Needs an unrestricted, claude-github or claude-full-dev policy.",
   foundry: 'Azure AI Foundry. The resource is retired; this backend no longer answers.',
   'foundry-latest': 'Azure AI Foundry. The resource is retired; this backend no longer answers.',
 };
@@ -37,6 +37,7 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
   const [llmBackend, setLlmBackend] = useState('claude-max');
   const [llmModel, setLlmModel] = useState('');
   const [backends, setBackends] = useState(FALLBACK_BACKENDS);
+  const [claudeLogin, setClaudeLogin] = useState(null);   // { hostId, loggedIn } for Claude Max on the chosen host
   const [expiryHours, setExpiryHours] = useState(24);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -62,6 +63,19 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
       .then((d) => { if (Array.isArray(d) && d.length) setBackends(d); })
       .catch(() => {});
   }, []);
+
+  // Claude Max instances share their host's Claude login; say so before creating
+  // one on a host where Claude is not logged in.
+  useEffect(() => {
+    if (llmBackend !== 'claude-max' || !hostId) { setClaudeLogin(null); return undefined; }
+    let alive = true;
+    setClaudeLogin({ hostId, loggedIn: undefined });
+    fetch(`/api/hosts/${encodeURIComponent(hostId)}/claude-login?refresh=1`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setClaudeLogin(d ? { hostId, loggedIn: d.loggedIn } : null); })
+      .catch(() => { if (alive) setClaudeLogin(null); });
+    return () => { alive = false; };
+  }, [llmBackend, hostId]);
 
   const backend = backends.find((b) => b.id === llmBackend) || backends[0];
   // Claude Max has nothing to pick; every other backend lists its models.
@@ -211,6 +225,12 @@ export default function NewInstanceModal({ defaultImage, onSubmit, onClose }) {
               </select>
             )}
             <p className="text-xs text-gray-500 mt-1">{BACKEND_HINT[llmBackend] || ''}</p>
+            {llmBackend === 'claude-max' && claudeLogin?.loggedIn === false && (
+              <div role="alert" className="mt-2 text-xs rounded-lg border border-amber-700 bg-amber-950/40 text-amber-200 px-3 py-2">
+                Claude isn't logged in on <b>{(hosts.find((h) => h.id === hostId)?.name || hostId)}</b>. The instance will start, but Claude Code will ask for <code>/login</code>.
+                Log in once in any Claude Max instance on that host; every Claude Max instance there shares the login.
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">
