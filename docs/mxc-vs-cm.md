@@ -1,6 +1,28 @@
 # Claude Manager vs. Microsoft Execution Containers (MXC) — what CM does today, and what MXC could replace later
 
-*Prepared 2026-06-04 from Build 2026 announcements. **Updated 2026-09-25**, when the source went public at [github.com/microsoft/mxc](https://github.com/microsoft/mxc) — that update is the section directly below, and it corrects three assumptions the June analysis was built on. The June material is kept after it, marked where superseded.*
+*Prepared 2026-06-04 from Build 2026 announcements. **Updated 2026-09-25**, when the source went public at [github.com/microsoft/mxc](https://github.com/microsoft/mxc), and **2026-10-12**, after general availability. The newest update comes first; the September section corrects three assumptions the June analysis was built on. The June material is kept last, marked where superseded. For the wider field (agent managers, vendor cloud agents, sandboxes, gateways) see [landscape-2026-10.md](landscape-2026-10.md).*
+
+---
+
+## Update 2026-10-12 — generally available; conclusion unchanged
+
+Source: [Windows Developer Blog, 2026-10-07](https://blogs.windows.com/windowsdeveloper/2026/10/07/microsoft-execution-containers-policy-driven-containment-for-ai-agents/) and the repo README as of 2026-10-12.
+
+### What changed
+
+- **GA.** MXC and its Windows 365 support are generally available. The September README line "no MXC profiles should be treated as security boundaries" is gone from both the README and the announcement. The only maturity label left is "experimental", on `microvm`, `hyperlight` and `windows_sandbox`.
+- **Backends by platform.** *Process container* on Windows 11 (AppContainer), macOS (Seatbelt) and Linux (Bubblewrap, the default; `lxc` also offered, neither marked experimental). *Session container* and *WSL container* are Windows 11 only. *MicroVM* on Windows 11 and Linux, experimental.
+- **Three modes.** Enforcement; learning (blocks and records what it blocked); permissive (allows and records). The JSON activity report is produced on Windows only.
+- **Integrations.** Shipped: GitHub Copilot, OpenAI Codex, OpenClaw, Replit, LM Studio, Unsloth, NVIDIA OpenShell. **Claude Code is listed as "coming"**, alongside Hermes Agent, Manus, Perplexity and others.
+- **Management layer, still "coming soon".** Entra agent identity, Intune policy for process containers, Agent 365 monitoring of local agents. MXC itself still has no identity model: MIT licence, a JSON policy file, TypeScript and .NET SDKs.
+- **Not covered by the announcement:** the egress mechanism (the September networking spec still stands), credential handling, Docker.
+
+### What it means for CM
+
+1. **No migration path, for the same reasons.** MXC contains a process; it has no fleet view, terminal or Claude Code lifecycle, and its Claude Code support has not shipped. On CM's Linux hosts it would give Bubblewrap, which is what Claude Code's own sandbox (`srt`) already uses. At most a future inner layer inside an instance, never a replacement for CM.
+2. **The GA wording is the C1 argument.** "The policy remains outside the agent workload's control." CM's iptables lock still runs inside the container it contains, with `NET_ADMIN` and sudo; the LAN ACCEPT (C2) and missing IPv6 rules (C3) are also unchanged as of this date. A GA product built on the opposite rule is the strongest outside argument yet for moving enforcement to the host.
+3. **Learning mode is cheap to copy.** Squid denials are already attributed per instance (`server/proxy-log.js`). A per-instance "would have needed these hosts" report with approve buttons gives CM learning mode without a new mechanism.
+4. **Revisit when Claude Code support ships**, and only for the Linux process container; the session container, activity report and Entra identity do not apply to CM's hosts.
 
 ---
 
