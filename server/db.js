@@ -478,6 +478,16 @@ export function setLiteLLMKey(instanceId, key) {
   db.prepare('UPDATE instances SET litellm_key = ? WHERE id = ?').run(key ? hashKey(key) : null, instanceId);
 }
 
+/** Does this callback token match the digest on record? Same digest as auth.hashToken. */
+export function eventTokenMatches(instanceId, token) {
+  const row = db.prepare('SELECT event_token FROM instances WHERE id = ?').get(instanceId);
+  return !!(token && row?.event_token && hashKey(token) === row.event_token);
+}
+
+export function setEventToken(instanceId, token) {
+  db.prepare('UPDATE instances SET event_token = ? WHERE id = ?').run(token ? hashKey(token) : null, instanceId);
+}
+
 export function getLiteLLMKeyHash(instanceId) {
   const row = db.prepare('SELECT litellm_key FROM instances WHERE id = ?').get(instanceId);
   return row?.litellm_key || null;

@@ -6,11 +6,17 @@
 // npm publishes a newer version, or on demand — so NEW instances always launch
 // on the latest Claude. Existing instances are left alone; the UI flags them as
 // updatable and the per-instance "Update Claude" action recreates them.
+//
+// Every enabled remote host gets the same build from the same context right
+// after the local one. Otherwise a remote host keeps whatever image something
+// else last built there, and its instances run stale scripts (a hook that never
+// sent its callback token went unnoticed that way).
 import Docker from 'dockerode';
 import { PassThrough } from 'stream';
 import fs from 'fs';
 import { config } from './config.js';
-import { getMeta, setMeta } from './db.js';
+import { getMeta, setMeta, getHosts } from './db.js';
+import { dockerFor } from './hosts.js';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const NPM_LATEST_URL = 'https://registry.npmjs.org/@anthropic-ai/claude-code/latest';
@@ -23,6 +29,7 @@ const state = {
   building: false,
   lastBuiltAt: null,
   lastError: null,
+  hosts: {},              // remote host id -> { builtAt, error }
 };
 
 let _broadcast = () => {};
@@ -38,6 +45,7 @@ export function getImageStatus() {
     builtAt: state.lastBuiltAt,
     error: state.lastError,
     canRebuild: !!config.WORKSPACE_SRC_DIR,
+    hosts: state.hosts,
   };
 }
 
@@ -131,25 +139,7 @@ export async function buildWorkspaceImage(log, { reason = 'manual' } = {}) {
   try { targetVersion = await fetchLatestClaudeVersion(); } catch { /* best effort */ }
 
   try {
-    const src = fs.readdirSync(config.WORKSPACE_SRC_DIR);
-    const stream = await docker.buildImage(
-      { context: config.WORKSPACE_SRC_DIR, src },
-      { t: config.CLAUDE_IMAGE, pull: false },
-    );
-
-    await new Promise((resolve, reject) => {
-      docker.modem.followProgress(
-        stream,
-        (err, res) => {
-          if (err) return reject(err);
-          const failed = (res || []).find((e) => e.error || e.errorDetail);
-          if (failed) return reject(new Error(failed.error || failed.errorDetail?.message || 'build failed'));
-          resolve(res);
-        },
-        (evt) => { if (evt.stream && evt.stream.trim()) log?.debug(evt.stream.trim()); },
-      );
-    });
-
+    await buildOn(docker, log);
     // Prefer the actually-installed version; fall back to the npm target.
     const built = (await detectImageVersion(config.CLAUDE_IMAGE)) || targetVersion;
     state.currentVersion = built;
@@ -158,6 +148,8 @@ export async function buildWorkspaceImage(log, { reason = 'manual' } = {}) {
     if (built) setMeta(META_VERSION, built);
     setMeta(META_BUILT_AT, state.lastBuiltAt);
     log?.info(`Workspace image rebuilt — Claude Code ${built || 'unknown'}`);
+
+    await buildOnRemoteHosts(log);
 
     // A new Claude Code is the moment its endpoints can change — run a
     // connectivity smoke test against a restricted policy so stale allowlists
@@ -174,6 +166,45 @@ export async function buildWorkspaceImage(log, { reason = 'manual' } = {}) {
   } finally {
     state.building = false;
     _broadcast({ type: 'workspace_image', status: getImageStatus() });
+  }
+}
+
+/** Build the workspace image from the mounted context on one Docker daemon. */
+async function buildOn(client, log) {
+  const src = fs.readdirSync(config.WORKSPACE_SRC_DIR);
+  const stream = await client.buildImage(
+    { context: config.WORKSPACE_SRC_DIR, src },
+    { t: config.CLAUDE_IMAGE, pull: false },
+  );
+  await new Promise((resolve, reject) => {
+    client.modem.followProgress(
+      stream,
+      (err, res) => {
+        if (err) return reject(err);
+        const failed = (res || []).find((e) => e.error || e.errorDetail);
+        if (failed) return reject(new Error(failed.error || failed.errorDetail?.message || 'build failed'));
+        resolve(res);
+      },
+      (evt) => { if (evt.stream && evt.stream.trim()) log?.debug(evt.stream.trim()); },
+    );
+  });
+}
+
+/**
+ * Same build on every enabled remote host, one at a time. A host that fails is
+ * recorded and logged; it never fails the local build, which has already
+ * succeeded and is what new local instances use.
+ */
+async function buildOnRemoteHosts(log) {
+  for (const host of getHosts({ enabledOnly: true }).filter((h) => h.kind !== 'local')) {
+    try {
+      await buildOn(await dockerFor(host.id), log);
+      state.hosts[host.id] = { builtAt: new Date().toISOString(), error: null };
+      log?.info({ host: host.id }, 'Workspace image rebuilt on remote host');
+    } catch (err) {
+      state.hosts[host.id] = { builtAt: state.hosts[host.id]?.builtAt || null, error: err.message };
+      log?.error({ host: host.id, err: err.message }, 'Workspace image rebuild failed on remote host');
+    }
   }
 }
 

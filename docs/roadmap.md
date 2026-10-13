@@ -67,13 +67,23 @@ per-instance token; widening an allowlist requires an admin device.
   so a restricted policy cannot be enforced on a remote host. Placement refuses
   such an instance rather than creating one nothing enforces. This is the single
   item blocking policy-constrained work off-host, and the next real chunk.
-- **Local-only subsystems.** health, idle-stop, security-scan,
-  connectivity-check and workspace-image all still build their own client
-  against the mounted socket, so a remote instance is not health-checked,
-  idle-stopped or scanned, and its image can drift.
-- **Per-instance LLM cost.** A per-instance virtual key is minted and stored,
-  but instances are injected a per-backend key, so per-instance spend reads
-  zero. The LiteLLM panel's budget figures are per backend, not per instance.
+- **Local-only subsystems.** health, idle-stop, security-scan and
+  connectivity-check still build their own client against the mounted socket,
+  so a remote instance is not health-checked, idle-stopped or scanned.
+  workspace-image no longer is (2026-10-13): every rebuild now builds the same
+  context on each enabled remote host. Before that a remote host's image was
+  whatever something else last built there; the workstation's came from the
+  retired manager's old source, whose hook never sent its callback token, so
+  every callback from that host was rejected and its instances never showed as
+  waiting. A remote host registered after the last rebuild has no image until
+  the next one.
+- **Callback tokens on old instances.** Instances created before per-instance
+  callback tokens have none; the address fallback cannot identify them on a
+  remote host, where their calls arrive from the host's own IP. A recreate
+  (Update Claude) now issues a token. Stopped pre-token instances on remote
+  hosts get one the next time they are recreated.
+- ~~**Per-instance LLM cost.**~~ Fixed: instances now carry their own LiteLLM
+  key (63a3bcf), so spend is per instance.
 
 ---
 

@@ -8,7 +8,7 @@ import path from 'path';
 import { config } from './config.js';
 import { BACKENDS, isRouted, listRoutes, resolveModel, mintInstanceKey, scopeKeyToBackend, litellmUrlFor, modelEnv, MODEL_ENV_PREFIXES } from './llm-routing.js';
 import { deleteVirtualKey } from './litellm.js';
-import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKeyHash, setLiteLLMKey, hashKey, DEFAULT_HOST_ID } from './db.js';
+import { getAllInstances, getInstance, getHosts, getHost, getLiteLLMKeyHash, setLiteLLMKey, hashKey, eventTokenMatches, setEventToken, DEFAULT_HOST_ID } from './db.js';
 import { LABELS, CONTAINER_PREFIX, NETWORK_POLICIES } from '../shared/constants.js';
 import { moduleLogger } from './logger.js';
 
@@ -879,14 +879,22 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   // Identity vars are re-asserted too: instances created by older manager
   // versions lack CM_INSTANCE_ID/CM_MANAGER_URL, which disables autostart,
   // cm-notify and cm-access inside them.
-  const identityPrefixes = ['CM_INSTANCE_ID=', 'CM_MANAGER_URL='];
+  const identityPrefixes = ['CM_INSTANCE_ID=', 'CM_MANAGER_URL=', 'CM_EVENT_TOKEN='];
   const instanceId = oldLabels[LABELS.ID] || id;
+  // The callback token proves the instance's hook calls are its own. Instances
+  // created before tokens existed have none, and the address fallback cannot
+  // identify them on a remote host (their calls arrive from the host's IP), so
+  // a recreate issues one. A token that no longer matches the record is replaced.
+  const envToken = ((oldConfig.Env || []).find((e) => e.startsWith('CM_EVENT_TOKEN=')) || '').slice('CM_EVENT_TOKEN='.length) || null;
+  const keepToken = eventTokenMatches(instanceId, envToken);
+  const eventToken = keepToken ? envToken : crypto.randomBytes(32).toString('base64url');
   const newEnv = (oldConfig.Env || []).filter((e) =>
     !proxyVarPrefixes.some(p => e.startsWith(p))
     && !MANAGED_SECRET_PREFIXES.some(p => e.startsWith(p))
     && !identityPrefixes.some(p => e.startsWith(p)));
   newEnv.push(
     `CM_INSTANCE_ID=${instanceId}`, `CM_MANAGER_URL=${managerUrlFor(host, MANAGER_URL)}`,
+    `CM_EVENT_TOKEN=${eventToken}`,
     `CM_NETWORK_POLICY=${newNetworkPolicy}`, ...managedSecretEnv(),
   );
   if (process.env.TZ) newEnv.push(`TZ=${process.env.TZ}`);
@@ -997,6 +1005,7 @@ export async function recreateInstance(id, { dockerSocket, networkPolicy, update
   }
   // The new container holds a key this instance has not recorded yet: keep its hash.
   if (mintedKey || litellmKey) setLiteLLMKey(instanceId, k);
+  if (!keepToken) setEventToken(instanceId, eventToken);
   await container.remove({ force: true });
 
   const newInspect = await newContainer.inspect();
